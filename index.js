@@ -383,6 +383,70 @@ function updateConversationEntry(id, messageId, update) {
   return after;
 }
 
+function deleteStoredAudio(entry) {
+  const filePath = getAudioFilePath(entry.audio?.fileName);
+  if (filePath) fs.rmSync(filePath, { force: true });
+}
+
+function removeConversationEntries(conversationId, messageIds) {
+  const ids = new Set(messageIds.filter(Boolean));
+  if (!ids.size) return 0;
+
+  const entries = readAllConversationEntries(conversationId);
+  const removed = entries.filter((entry) => ids.has(entry.sourceMessageId));
+  if (!removed.length) return 0;
+
+  removed.forEach(deleteStoredAudio);
+  const remaining = entries.filter((entry) => !ids.has(entry.sourceMessageId));
+  const index = loadConversationIndex();
+
+  if (!remaining.length) {
+    const file = getConversationFile(conversationId);
+    if (file) fs.rmSync(file, { force: true });
+    delete index.conversations[conversationId];
+  } else {
+    writeConversationEntries(conversationId, remaining);
+    const conversation = index.conversations[conversationId];
+    const last = remaining[remaining.length - 1];
+    if (conversation) {
+      conversation.messageCount = remaining.length;
+      conversation.lastMessageAt = last.timestamp;
+      conversation.preview = String(last.text || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+    }
+  }
+  queueConversationIndexWrite();
+  return removed.length;
+}
+
+function removeEntireConversation(jid) {
+  if (!jid) return 0;
+  const conversationId = getConversationId(jid);
+  const entries = readAllConversationEntries(conversationId);
+  if (!entries.length) return 0;
+  entries.forEach(deleteStoredAudio);
+  const file = getConversationFile(conversationId);
+  if (file) fs.rmSync(file, { force: true });
+  const index = loadConversationIndex();
+  delete index.conversations[conversationId];
+  queueConversationIndexWrite();
+  return entries.length;
+}
+
+function removeMessagesFromWhatsAppEvent(keys) {
+  let removed = 0;
+  const byJid = new Map();
+  for (const key of keys || []) {
+    const jid = key?.remoteJid || key?.remoteJidAlt;
+    if (!jid || !key?.id) continue;
+    if (!byJid.has(jid)) byJid.set(jid, []);
+    byJid.get(jid).push(key.id);
+  }
+  for (const [jid, messageIds] of byJid) {
+    removed += removeConversationEntries(getConversationId(jid), messageIds);
+  }
+  if (removed) console.log(`Sincronização: ${removed} mensagem(ns) apagada(s) também foram removidas do histórico local.`);
+}
+
 function safeAudioFileName(conversationId, messageId, mimeType) {
   const safeMessageId = String(messageId || crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 160);
   return `${conversationId}-${safeMessageId}.${extensionForMimeType(mimeType)}`;
@@ -754,6 +818,23 @@ async function connectWhatsApp() {
         });
         scheduleReconnect();
       }
+    });
+
+    socket.ev.on('messages.delete', (event) => {
+      if ('keys' in event) {
+        removeMessagesFromWhatsAppEvent(event.keys);
+      } else if (event.all && event.jid) {
+        const removed = removeEntireConversation(event.jid);
+        if (removed) console.log('Sincronização: conversa apagada no WhatsApp removida do histórico local.');
+      }
+    });
+
+    socket.ev.on('messages.update', (updates) => {
+      // "Apagar para todos" chega como revogação de mensagem, não como messages.delete.
+      const revokedKeys = updates
+        .filter(({ key, update }) => key?.id && update?.message === null)
+        .map(({ key }) => key);
+      removeMessagesFromWhatsAppEvent(revokedKeys);
     });
 
     socket.ev.on('messages.upsert', ({ messages, type }) => {

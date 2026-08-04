@@ -46,6 +46,12 @@ Com `IMPORT_HISTORY=true` (padrão), no primeiro pareamento o app importa e salv
 
 Para o modo manual funcionar, `STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION=true` deve permanecer no `.env` (é o padrão). Se definir `false`, o sistema não guardará os áudios, nem poderá reproduzi-los ou transcrevê-los depois. Para áudios recebidos antes desta atualização, faça **Refazer conexão / novo QR**: se o WhatsApp reenviar a mídia no histórico, o app a anexa à conversa existente sem duplicar os textos.
 
+## Exclusões no WhatsApp
+
+O modo atual é **remover também do sistema**. Enquanto o app estiver conectado, quando o WhatsApp enviar um evento de exclusão — inclusive “apagar para todos” ou uma exclusão sincronizada do telefone — a mensagem sai do histórico local e o arquivo de áudio associado também é apagado. Se uma conversa inteira vier marcada como apagada, ela também é removida.
+
+Não existe uma API confiável para comparar toda a conta e descobrir retroativamente cada mensagem que foi apagada apenas no celular (“apagar para mim”/limpar conversa) enquanto o app estava desligado. Para isso, conecte o painel antes de realizar a exclusão; ele então recebe o evento do WhatsApp e aplica a remoção local.
+
 ## O que é salvo
 
 - Conversas, histórico importado e transcrições são salvos localmente em `data/`, que está ignorada pelo Git.
