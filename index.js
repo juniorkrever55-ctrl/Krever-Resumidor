@@ -40,6 +40,7 @@ const MAX_TRACKED_MESSAGE_IDS = Number(process.env.MAX_TRACKED_MESSAGE_IDS || 10
 const MAX_AUDIO_BYTES = Number(process.env.MAX_AUDIO_BYTES || 24 * 1024 * 1024);
 const MAX_SUMMARY_CHARS = Number(process.env.MAX_SUMMARY_CHARS || 50000);
 const ON_DEMAND_HISTORY_PAGE_SIZE = 50;
+const BULK_TRANSCRIPTION_DELAY_MS = 500;
 
 const DEFAULT_SUMMARY_INSTRUCTIONS = `Você é um assistente de vendas de consórcio. Resuma a conversa de forma objetiva em português do Brasil. Só considere que é uma oportunidade de consórcio quando houver sinais claros disso. Nunca invente dados. Use exatamente esta estrutura:
 
@@ -73,6 +74,8 @@ let contactsCache = null;
 let contactsWriteTimer = null;
 const pendingTranscriptions = new Map();
 const onDemandHistoryRequestAt = new Map();
+const bulkTranscriptionJobs = new Map();
+const activeBulkJobByConversation = new Map();
 
 ensureDirectories();
 
@@ -761,6 +764,93 @@ async function transcribeStoredConversationAudio(conversationId, messageId) {
   }
 }
 
+function getPendingAudioStats(conversationId) {
+  const entries = readAllConversationEntries(conversationId)
+    .filter((entry) => entry.type === 'audio' && entry.audio?.transcriptionStatus !== 'completed');
+  const available = entries.filter((entry) => {
+    const filePath = getAudioFilePath(entry.audio?.fileName);
+    return Boolean(filePath && fs.existsSync(filePath) && entry.sourceMessageId);
+  });
+  return {
+    totalPending: entries.length,
+    available: available.length,
+    unavailable: entries.length - available.length,
+    entries: available,
+  };
+}
+
+function publicBulkJob(job) {
+  return {
+    id: job.id,
+    status: job.status,
+    total: job.total,
+    processed: job.processed,
+    succeeded: job.succeeded,
+    failed: job.failed,
+    current: job.current,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt || null,
+  };
+}
+
+function retainBulkJobForInspection(job) {
+  const timer = setTimeout(() => bulkTranscriptionJobs.delete(job.id), 10 * 60 * 1000);
+  timer.unref?.();
+}
+
+function startBulkTranscription(conversationId) {
+  const activeJobId = activeBulkJobByConversation.get(conversationId);
+  const activeJob = activeJobId && bulkTranscriptionJobs.get(activeJobId);
+  if (activeJob?.status === 'running') return activeJob;
+
+  const stats = getPendingAudioStats(conversationId);
+  const job = {
+    id: crypto.randomUUID(),
+    conversationId,
+    status: 'running',
+    total: stats.available,
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    current: null,
+    startedAt: new Date().toISOString(),
+  };
+  bulkTranscriptionJobs.set(job.id, job);
+  activeBulkJobByConversation.set(conversationId, job.id);
+
+  void (async () => {
+    for (const entry of stats.entries) {
+      job.current = entry.sourceMessageId;
+      try {
+        await transcribeStoredConversationAudio(conversationId, entry.sourceMessageId);
+        job.succeeded += 1;
+      } catch (error) {
+        job.failed += 1;
+        console.warn(`Não foi possível transcrever um áudio em lote: ${error.message}`);
+      }
+      job.processed += 1;
+      if (job.processed < job.total) {
+        await new Promise((resolve) => setTimeout(resolve, BULK_TRANSCRIPTION_DELAY_MS));
+      }
+    }
+    job.status = job.failed ? 'completed_with_errors' : 'completed';
+    job.current = null;
+    job.finishedAt = new Date().toISOString();
+    activeBulkJobByConversation.delete(conversationId);
+    retainBulkJobForInspection(job);
+  })().catch((error) => {
+    job.status = 'failed';
+    job.current = null;
+    job.finishedAt = new Date().toISOString();
+    job.failed = Math.max(1, job.failed);
+    activeBulkJobByConversation.delete(conversationId);
+    console.error(`Falha no lote de transcrição: ${error.message}`);
+    retainBulkJobForInspection(job);
+  });
+
+  return job;
+}
+
 function setConnectionStatus(status, changes = {}) {
   Object.assign(connection, { status, ...changes });
 }
@@ -1051,6 +1141,34 @@ app.post('/api/conversations/:id/history', async (req, res, next) => {
   } catch (error) {
     return next(error);
   }
+});
+
+app.get('/api/conversations/:id/audio/pending', (req, res, next) => {
+  try {
+    const index = loadConversationIndex();
+    if (!index.conversations[req.params.id]) return res.status(404).json({ error: 'Conversa não encontrada.' });
+    const stats = getPendingAudioStats(req.params.id);
+    return res.json({ totalPending: stats.totalPending, available: stats.available, unavailable: stats.unavailable });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/conversations/:id/audio/transcribe-all', (req, res, next) => {
+  try {
+    const index = loadConversationIndex();
+    if (!index.conversations[req.params.id]) return res.status(404).json({ error: 'Conversa não encontrada.' });
+    const job = startBulkTranscription(req.params.id);
+    return res.status(202).json({ job: publicBulkJob(job) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/transcription-jobs/:jobId', (req, res) => {
+  const job = bulkTranscriptionJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Lote de transcrição não encontrado ou expirado.' });
+  return res.json({ job: publicBulkJob(job) });
 });
 
 app.get('/api/conversations/:id/audio/:messageId', (req, res, next) => {

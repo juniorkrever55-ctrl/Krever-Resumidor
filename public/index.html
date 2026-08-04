@@ -335,11 +335,49 @@ Se a conversa for pessoal ou não tiver dados de venda de consórcio, responda a
       }
     }
 
+    function wait(milliseconds) {
+      return new Promise((resolve) => setTimeout(resolve, milliseconds));
+    }
+
+    async function transcribePendingAudiosBeforeSummary(conversationId) {
+      const stats = await request(`/api/conversations/${encodeURIComponent(conversationId)}/audio/pending`);
+      if (!stats.available) {
+        if (stats.unavailable) elements.summaryHint.textContent = `${stats.unavailable} áudio(s) não estão disponíveis localmente e não entrarão no resumo.`;
+        return;
+      }
+
+      const unavailable = stats.unavailable ? ` ${stats.unavailable} áudio(s) sem arquivo local serão ignorados.` : '';
+      const shouldTranscribe = confirm(`Esta conversa tem ${stats.available} áudio(s) ainda não transcrito(s).
+
+OK: transcrever todos antes de resumir (consome créditos da Groq).
+Cancelar: resumir somente textos e áudios já transcritos.${unavailable}`);
+      if (!shouldTranscribe) return;
+
+      const started = await request(`/api/conversations/${encodeURIComponent(conversationId)}/audio/transcribe-all`, { method: 'POST', body: '{}' });
+      let job = started.job;
+      while (job.status === 'running') {
+        elements.summarizeButton.textContent = `Transcrevendo ${job.processed}/${job.total}…`;
+        await wait(900);
+        const status = await request(`/api/transcription-jobs/${encodeURIComponent(job.id)}`);
+        job = status.job;
+      }
+
+      if (job.status === 'failed') throw new Error('O lote de transcrição foi interrompido antes de terminar.');
+      if (job.failed) elements.summaryHint.textContent = `${job.succeeded} áudio(s) transcrito(s); ${job.failed} não puderam ser transcritos. O resumo seguirá com o conteúdo disponível.`;
+      else elements.summaryHint.textContent = `${job.succeeded} áudio(s) transcrito(s). Gerando o resumo completo…`;
+      await loadConversation(conversationId, true);
+    }
+
     async function summarizeConversation() {
       if (!state.selectedConversationId) return;
-      setButtonLoading(elements.summarizeButton, true, 'Gerando resumo…'); elements.summaryOutput.textContent = 'Enviando conversa para a IA…';
+      const conversationId = state.selectedConversationId;
+      setButtonLoading(elements.summarizeButton, true, 'Verificando áudios…');
+      elements.summaryOutput.textContent = 'Verificando textos e áudios disponíveis…';
       try {
-        const data = await request(`/api/conversations/${encodeURIComponent(state.selectedConversationId)}/summarize`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value }) });
+        await transcribePendingAudiosBeforeSummary(conversationId);
+        elements.summarizeButton.textContent = 'Gerando resumo…';
+        elements.summaryOutput.textContent = 'Enviando conversa para a IA…';
+        const data = await request(`/api/conversations/${encodeURIComponent(conversationId)}/summarize`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value }) });
         elements.summaryOutput.textContent = data.summary;
       } catch (error) { elements.summaryOutput.textContent = `Erro: ${error.message}`; }
       finally { setButtonLoading(elements.summarizeButton, false); }

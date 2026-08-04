@@ -43,7 +43,7 @@ Em uma conversa selecionada, o botão **Buscar 50 anteriores** pede ao WhatsApp 
 
 - **Texto histórico:** é apenas gravado em `data/`; não vai para a IA automaticamente.
 - **Qualquer áudio recebido:** é guardado localmente em `data/audio/` para aparecer com player no painel. Isso não chama a Groq. Na conversa, clique em **Transcrever este áudio** somente nos áudios que desejar enviar à IA.
-- **Transcrição:** cada clique em **Transcrever este áudio** faz uma chamada à Groq e consome uma requisição. Áudios antigos que o WhatsApp não disponibilizar mais podem não ser baixados.
+- **Transcrição em lote:** ao clicar em **Gerar resumo da conversa**, se houver áudios ainda pendentes, o painel pergunta se deve transcrever todos os arquivos locais disponíveis daquela conversa. Confirmar envia os áudios um a um para a Groq e consome uma requisição por áudio; cancelar gera o resumo somente com textos e transcrições já existentes.
 - **Resumo:** só chama a Groq quando você clica em **Gerar resumo da conversa**. Para controlar custo e contexto, cada resumo usa as últimas 1.000 mensagens registradas e no máximo 50.000 caracteres. Um novo clique faz uma nova chamada.
 
 Para o modo manual funcionar, `STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION=true` deve permanecer no `.env` (é o padrão). Se definir `false`, o sistema não guardará os áudios, nem poderá reproduzi-los ou transcrevê-los depois. Para áudios recebidos antes desta atualização, faça **Refazer conexão / novo QR**: se o WhatsApp reenviar a mídia no histórico, o app a anexa à conversa existente sem duplicar os textos.
@@ -66,6 +66,8 @@ Não existe uma API confiável para comparar toda a conta e descobrir retroativa
 - `POST /api/whatsapp/reset` — remove a sessão local e reinicia o pareamento.
 - `GET /api/conversations` — conversas capturadas.
 - `POST /api/conversations/:id/history` — pede uma página de até 50 mensagens mais antigas ao WhatsApp.
+- `GET /api/conversations/:id/audio/pending` — quantidade de áudios disponíveis para transcrição em lote.
+- `POST /api/conversations/:id/audio/transcribe-all` — inicia a transcrição manual em lote.
 - `POST /api/conversations/:id/summarize` — resumo de uma conversa armazenada.
 - `POST /api/summarize` — resumo de texto avulso.
 
