@@ -41,7 +41,9 @@ const WHATSAPP_LOG_LEVEL = process.env.DEBUG_WHATSAPP === 'true' ? 'info' : 'sil
 const IMPORT_HISTORY = process.env.IMPORT_HISTORY !== 'false';
 const MAX_TRACKED_MESSAGE_IDS = Number(process.env.MAX_TRACKED_MESSAGE_IDS || 100000);
 const MAX_AUDIO_BYTES = Number(process.env.MAX_AUDIO_BYTES || 24 * 1024 * 1024);
-const MAX_SUMMARY_CHARS = Number(process.env.MAX_SUMMARY_CHARS || 50000);
+// Limite conservador para caber no TPM de contas gratuitas/on-demand da Groq.
+const MAX_SUMMARY_CHARS = Math.min(Number(process.env.MAX_SUMMARY_CHARS || 12000), 12000);
+const MAX_SUBMITTED_SUMMARY_CHARS = Number(process.env.MAX_SUBMITTED_SUMMARY_CHARS || 1000000);
 const ON_DEMAND_HISTORY_PAGE_SIZE = 50;
 const BULK_TRANSCRIPTION_DELAY_MS = 1200;
 const BULK_TRANSCRIPTION_MAX_ATTEMPTS = 3;
@@ -1448,8 +1450,18 @@ function validateText(value, field, maximum) {
   return value.trim();
 }
 
+function trimTranscriptForGroq(text) {
+  if (text.length <= MAX_SUMMARY_CHARS) return text;
+
+  // Mantém início e fim: o início costuma trazer objetivo/contexto e o fim, negociação/próximo passo.
+  const firstPartLength = Math.floor(MAX_SUMMARY_CHARS * 0.3);
+  const lastPartLength = MAX_SUMMARY_CHARS - firstPartLength;
+  return `${text.slice(0, firstPartLength)}\n\n[... trecho intermediário omitido para respeitar o limite da Groq ...]\n\n${text.slice(-lastPartLength)}`;
+}
+
 async function summarize(text, instructions) {
-  const conversation = validateText(text, 'A conversa', MAX_SUMMARY_CHARS);
+  const conversation = validateText(text, 'A conversa', MAX_SUBMITTED_SUMMARY_CHARS);
+  const compactConversation = trimTranscriptForGroq(conversation);
   const prompt = typeof instructions === 'string' && instructions.trim()
     ? instructions.trim().slice(0, 5000)
     : DEFAULT_SUMMARY_INSTRUCTIONS;
@@ -1460,9 +1472,10 @@ async function summarize(text, instructions) {
     body: JSON.stringify({
       model: GROQ_CHAT_MODEL,
       temperature: 0.2,
+      max_completion_tokens: 900,
       messages: [
         { role: 'system', content: prompt },
-        { role: 'user', content: `Conversa para análise:\n\n${conversation}` },
+        { role: 'user', content: `Conversa para análise:\n\n${compactConversation}` },
       ],
     }),
   });
@@ -1675,8 +1688,7 @@ app.post('/api/conversations/:id/summarize', async (req, res, next) => {
     const transcript = loadConversationEntries(id, 1000)
       .map((entry) => `[${entry.timestamp}] ${getSummarySpeaker(entry)}: ${entry.text}`)
       .join('\n');
-    const safeTranscript = transcript.slice(-MAX_SUMMARY_CHARS);
-    const summary = await summarize(safeTranscript, req.body?.instructions);
+    const summary = await summarize(transcript, req.body?.instructions);
     return res.json({ summary, conversation: toPublicConversation(conversation) });
   } catch (error) {
     return next(error);

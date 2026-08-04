@@ -45,7 +45,7 @@ Em uma conversa selecionada, o botão **Buscar 50 anteriores** pede ao WhatsApp 
 - **Qualquer áudio recebido:** é guardado localmente em `data/audio/` para aparecer com player no painel. Isso não chama a Groq. Na conversa, clique em **Transcrever este áudio** somente nos áudios que desejar enviar à IA.
 - **Imagens de simulação:** são guardadas em `data/images/`, aparecem como prévia na conversa e não são enviadas automaticamente à IA.
 - **Transcrição/análise em lote:** ao clicar em **Gerar resumo da conversa**, o painel pergunta se deve transcrever todos os áudios e analisar todas as imagens locais pendentes. Confirmar envia os arquivos um a um para a Groq e consome uma requisição por áudio/imagem; cancelar gera o resumo somente com textos, transcrições e análises já existentes.
-- **Resumo:** só chama a Groq quando você clica em **Gerar resumo da conversa**. Para controlar custo e contexto, cada resumo usa as últimas 1.000 mensagens registradas e no máximo 50.000 caracteres. Um novo clique faz uma nova chamada.
+- **Resumo:** só chama a Groq quando você clica em **Gerar resumo da conversa**. Para caber no limite padrão da Groq, cada chamada envia no máximo 12.000 caracteres da conversa, preservando o início e o fim quando for necessário compactar. Um novo clique faz uma nova chamada.
 
 Para o modo manual funcionar, `STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION=true` deve permanecer no `.env` (é o padrão). Se definir `false`, o sistema não guardará os áudios, nem poderá reproduzi-los ou transcrevê-los depois. Para áudios recebidos antes desta atualização, faça **Refazer conexão / novo QR**: se o WhatsApp reenviar a mídia no histórico, o app a anexa à conversa existente sem duplicar os textos.
 
