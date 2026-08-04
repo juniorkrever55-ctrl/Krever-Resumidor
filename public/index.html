@@ -132,7 +132,7 @@ Na lista, priorize: CPF ou CNPJ, renda mensal, valor da carta/crédito, parcelas
 Destaque apenas informações realmente importantes: objetivo do cliente, bem/crédito desejado, situação de aluguel, renda mensal, capacidade e parcela negociada, prazo/meta de contemplação, valor da carta, valor disponível para lance de recurso próprio, profissão, participação de cônjuge, condição apresentada, objeção/restrição, motivo de não fechamento, status e próximo passo. Não invente, estime ou complete informação ausente; simplesmente não a mencione.
 
 Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente informado (11 dígitos) e de CNPJ somente um CNPJ explicitamente informado (14 dígitos); não suponha um tipo de documento. Quando existirem, mencione de forma clara na narrativa e também na lista os dados críticos como renda mensal e documento. Explique a estratégia comercial apresentada, o desfecho da negociação e o próximo passo de forma factual. O resultado deve ser uma nota interna de CRM, nunca uma resposta, proposta ou texto de atendimento ao cliente.</textarea>
-          <div class="summary-actions"><button class="button" type="button" id="summarize-button" disabled>Gerar resumo da conversa</button><span class="hint" id="summary-hint">Escolha uma conversa para resumir.</span></div>
+          <div class="summary-actions"><button class="button" type="button" id="summarize-button" disabled>Gerar resumo da conversa</button><button class="button secondary" type="button" id="copy-summary-button" disabled>Copiar resumo</button><span class="hint" id="summary-hint">Escolha uma conversa para resumir.</span></div>
           <div class="summary-output" id="summary-output" aria-live="polite">O resumo aparecerá aqui.</div>
         </section>
       </main>
@@ -157,7 +157,7 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
       groqWarning: document.getElementById('groq-warning'), resetButton: document.getElementById('reset-button'), newAccountButton: document.getElementById('new-account-button'),
       conversationList: document.getElementById('conversation-list'), conversationSearch: document.getElementById('conversation-search'), conversationTitle: document.getElementById('conversation-title'),
       conversationInfo: document.getElementById('conversation-info'), olderHistoryButton: document.getElementById('older-history-button'), entries: document.getElementById('entries'),
-      summarizeButton: document.getElementById('summarize-button'), summaryHint: document.getElementById('summary-hint'),
+      summarizeButton: document.getElementById('summarize-button'), copySummaryButton: document.getElementById('copy-summary-button'), summaryHint: document.getElementById('summary-hint'),
       summaryOutput: document.getElementById('summary-output'), instructions: document.getElementById('instructions'),
       manualText: document.getElementById('manual-text'), manualOutput: document.getElementById('manual-output'), manualButton: document.getElementById('manual-button'),
     };
@@ -316,7 +316,10 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
         elements.summarizeButton.disabled = false;
         elements.olderHistoryButton.disabled = false;
         elements.summaryHint.textContent = 'A IA receberá as mensagens registradas desta conversa.';
-        if (!preserveSummary) elements.summaryOutput.textContent = 'O resumo aparecerá aqui.';
+        if (!preserveSummary) {
+          elements.summaryOutput.textContent = 'O resumo aparecerá aqui.';
+          elements.copySummaryButton.disabled = true;
+        }
         renderEntries(data.entries); loadConversations();
       } catch (error) { elements.summaryOutput.textContent = `Erro ao abrir conversa: ${error.message}`; }
     }
@@ -374,6 +377,7 @@ Cancelar: resumir somente textos e áudios já transcritos.${unavailable}`);
       if (!state.selectedConversationId) return;
       const conversationId = state.selectedConversationId;
       setButtonLoading(elements.summarizeButton, true, 'Verificando áudios…');
+      elements.copySummaryButton.disabled = true;
       elements.summaryOutput.textContent = 'Verificando textos e áudios disponíveis…';
       try {
         await transcribePendingAudiosBeforeSummary(conversationId);
@@ -381,7 +385,8 @@ Cancelar: resumir somente textos e áudios já transcritos.${unavailable}`);
         elements.summaryOutput.textContent = 'Enviando conversa para a IA…';
         const data = await request(`/api/conversations/${encodeURIComponent(conversationId)}/summarize`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value }) });
         elements.summaryOutput.textContent = data.summary;
-      } catch (error) { elements.summaryOutput.textContent = `Erro: ${error.message}`; }
+        elements.copySummaryButton.disabled = false;
+      } catch (error) { elements.summaryOutput.textContent = `Erro: ${error.message}`; elements.copySummaryButton.disabled = true; }
       finally { setButtonLoading(elements.summarizeButton, false); }
     }
 
@@ -411,6 +416,7 @@ Cancelar: resumir somente textos e áudios já transcritos.${unavailable}`);
           elements.conversationInfo.textContent = 'A nova conta começará a preencher conversas após a sincronização.';
           elements.entries.textContent = 'Histórico local apagado. Aguarde a sincronização da nova conta.';
           elements.summarizeButton.disabled = true;
+          elements.copySummaryButton.disabled = true;
           elements.olderHistoryButton.disabled = true;
         }
         setTimeout(() => { refreshStatus(); loadConversations(); }, 800);
@@ -422,7 +428,32 @@ Cancelar: resumir somente textos e áudios já transcritos.${unavailable}`);
     elements.newAccountButton.addEventListener('click', () => resetWhatsApp(true));
     document.getElementById('refresh-button').addEventListener('click', refreshStatus);
     document.getElementById('reload-conversations').addEventListener('click', loadConversations);
+    async function copySummary() {
+      const text = elements.summaryOutput.textContent.trim();
+      if (!text || text === 'O resumo aparecerá aqui.') return;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const temporary = document.createElement('textarea');
+          temporary.value = text;
+          temporary.style.position = 'fixed';
+          temporary.style.opacity = '0';
+          document.body.append(temporary);
+          temporary.select();
+          document.execCommand('copy');
+          temporary.remove();
+        }
+        const original = elements.copySummaryButton.textContent;
+        elements.copySummaryButton.textContent = 'Copiado!';
+        setTimeout(() => { elements.copySummaryButton.textContent = original; }, 1600);
+      } catch (error) {
+        elements.summaryHint.textContent = 'Não foi possível copiar automaticamente. Selecione o texto do resumo e copie manualmente.';
+      }
+    }
+
     elements.summarizeButton.addEventListener('click', summarizeConversation);
+    elements.copySummaryButton.addEventListener('click', copySummary);
     elements.olderHistoryButton.addEventListener('click', requestOlderHistory);
     elements.manualButton.addEventListener('click', summarizeManual);
     elements.conversationSearch.addEventListener('input', () => renderConversations());
