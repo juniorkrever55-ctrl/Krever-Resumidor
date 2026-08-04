@@ -40,12 +40,14 @@
     .sidebar { overflow:hidden; }
     .sidebar-top { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:17px 16px 12px; }
     .sidebar-top .button { min-height:33px; padding:6px 9px; font-size:.77rem; }
+    .conversation-search { width:calc(100% - 32px); min-height:37px; margin:0 16px 11px; padding:8px 10px; color:var(--text); border:1px solid #304866; border-radius:9px; background:#091525; font-size:.8rem; }
     .conversation-list { max-height:610px; overflow:auto; padding:0 8px 9px; }
     .conversation { width:100%; padding:13px 10px; color:var(--text); text-align:left; background:transparent; border-radius:11px; }
     .conversation:hover, .conversation.active { background:#1b3150; }
     .conversation-name { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; font-size:.9rem; }
     .conversation-preview { display:block; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:.78rem; }
     .conversation-date { display:block; margin-top:5px; color:#7187a5; font-size:.7rem; }
+    .conversation-phone { display:block; margin-top:3px; color:#7690b0; font-size:.72rem; }
     .empty { padding:23px 17px; color:var(--muted); text-align:center; font-size:.86rem; line-height:1.5; }
     .main { min-height:610px; overflow:hidden; }
     .main-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:17px 19px; border-bottom:1px solid var(--line); }
@@ -104,7 +106,8 @@
     <div class="layout">
       <aside class="card sidebar" aria-label="Conversas recebidas">
         <div class="sidebar-top"><h2>Conversas</h2><button class="button secondary" type="button" id="reload-conversations">Atualizar</button></div>
-        <div class="conversation-list" id="conversation-list"><p class="empty">Ainda não há mensagens novas registradas.</p></div>
+        <input class="conversation-search" id="conversation-search" type="search" placeholder="Pesquisar por nome ou número" autocomplete="off" aria-label="Pesquisar conversas por nome ou número">
+        <div class="conversation-list" id="conversation-list"><p class="empty">Ainda não há conversas registradas.</p></div>
       </aside>
 
       <main class="card main">
@@ -141,13 +144,13 @@ Se a conversa for pessoal ou não tiver dados de venda de consórcio, responda a
   </div>
 
   <script>
-    const state = { selectedConversationId: null, instructions: document.getElementById('instructions').value, entries: [] };
+    const state = { selectedConversationId: null, instructions: document.getElementById('instructions').value, entries: [], conversations: [] };
     const elements = {
       headerDot: document.getElementById('header-dot'), headerStatus: document.getElementById('header-status'),
       connectionDot: document.getElementById('connection-dot'), connectionText: document.getElementById('connection-text'),
       qrImage: document.getElementById('qr-image'), qrPlaceholder: document.getElementById('qr-placeholder'),
       groqWarning: document.getElementById('groq-warning'), resetButton: document.getElementById('reset-button'),
-      conversationList: document.getElementById('conversation-list'), conversationTitle: document.getElementById('conversation-title'),
+      conversationList: document.getElementById('conversation-list'), conversationSearch: document.getElementById('conversation-search'), conversationTitle: document.getElementById('conversation-title'),
       conversationInfo: document.getElementById('conversation-info'), entries: document.getElementById('entries'),
       summarizeButton: document.getElementById('summarize-button'), summaryHint: document.getElementById('summary-hint'),
       summaryOutput: document.getElementById('summary-output'), instructions: document.getElementById('instructions'),
@@ -208,23 +211,35 @@ Se a conversa for pessoal ou não tiver dados de venda de consórcio, responda a
       catch (error) { elements.connectionText.textContent = `Erro ao consultar o status: ${error.message}`; }
     }
 
-    function renderConversations(conversations) {
+    function normalizeSearch(value) {
+      return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
+    function renderConversations(conversations = state.conversations) {
+      const query = normalizeSearch(elements.conversationSearch.value);
+      const filtered = !query ? conversations : conversations.filter((conversation) => {
+        const searchable = normalizeSearch(`${conversation.name || ''} ${conversation.phone || ''} ${conversation.preview || ''}`);
+        return searchable.includes(query);
+      });
+
       elements.conversationList.replaceChildren();
-      if (!conversations.length) {
-        const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = 'Ainda não há mensagens novas registradas.'; elements.conversationList.append(empty); return;
+      if (!filtered.length) {
+        const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = query ? 'Nenhuma conversa encontrada para esta pesquisa.' : 'Ainda não há conversas registradas.'; elements.conversationList.append(empty); return;
       }
-      conversations.forEach((conversation) => {
+      filtered.forEach((conversation) => {
         const button = document.createElement('button'); button.type = 'button'; button.className = `conversation${conversation.id === state.selectedConversationId ? ' active' : ''}`;
         const name = document.createElement('span'); name.className = 'conversation-name'; name.textContent = conversation.name;
+        const phone = document.createElement('span'); phone.className = 'conversation-phone'; phone.textContent = conversation.phone ? `+${conversation.phone}` : '';
         const preview = document.createElement('span'); preview.className = 'conversation-preview'; preview.textContent = conversation.preview || 'Sem prévia';
         const date = document.createElement('span'); date.className = 'conversation-date'; date.textContent = formatDate(conversation.lastMessageAt);
-        button.append(name, preview, date); button.addEventListener('click', () => loadConversation(conversation.id)); elements.conversationList.append(button);
+        button.append(name); if (conversation.phone) button.append(phone); button.append(preview, date);
+        button.addEventListener('click', () => loadConversation(conversation.id)); elements.conversationList.append(button);
       });
     }
 
     async function loadConversations() {
       try {
-        const data = await request('/api/conversations'); renderConversations(data.conversations);
+        const data = await request('/api/conversations'); state.conversations = data.conversations; renderConversations();
       } catch (error) { elements.conversationList.textContent = `Erro: ${error.message}`; }
     }
 
@@ -329,6 +344,7 @@ Se a conversa for pessoal ou não tiver dados de venda de consórcio, responda a
     document.getElementById('reload-conversations').addEventListener('click', loadConversations);
     elements.summarizeButton.addEventListener('click', summarizeConversation);
     elements.manualButton.addEventListener('click', summarizeManual);
+    elements.conversationSearch.addEventListener('input', () => renderConversations());
 
     refreshStatus(); loadConversations();
     // QR expira rápido; a tela acompanha a conexão sem expor a string do QR.

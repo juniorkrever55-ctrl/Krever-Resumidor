@@ -26,6 +26,7 @@ const CONVERSATIONS_DIR = path.join(DATA_DIR, 'conversations');
 const AUDIO_DIR = path.join(DATA_DIR, 'audio');
 const CONVERSATIONS_INDEX_FILE = path.join(DATA_DIR, 'conversations.json');
 const PROCESSED_MESSAGE_IDS_FILE = path.join(DATA_DIR, 'processed-message-ids.json');
+const CONTACTS_FILE = path.join(DATA_DIR, 'contacts.json');
 const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || 'llama-3.1-8b-instant';
@@ -67,6 +68,8 @@ let conversationIndexWriteTimer = null;
 let processedMessageIds = null;
 let processedMessageIdsDirty = false;
 let processedMessageIdsWriteTimer = null;
+let contactsCache = null;
+let contactsWriteTimer = null;
 const pendingTranscriptions = new Map();
 
 ensureDirectories();
@@ -101,10 +104,91 @@ function getConversationFile(id) {
   return path.join(CONVERSATIONS_DIR, `${id}.jsonl`);
 }
 
+function phoneFromJid(jid) {
+  if (typeof jid !== 'string' || !jid.endsWith('@s.whatsapp.net')) return '';
+  return jid.split('@')[0].split(':')[0].replace(/\D/g, '');
+}
+
+function loadContacts() {
+  if (contactsCache) return contactsCache;
+  const saved = readJson(CONTACTS_FILE, { contacts: {} });
+  contactsCache = (!saved || typeof saved !== 'object' || !saved.contacts || typeof saved.contacts !== 'object')
+    ? { contacts: {} }
+    : saved;
+  return contactsCache;
+}
+
+function flushContacts() {
+  if (!contactsCache) return;
+  clearTimeout(contactsWriteTimer);
+  contactsWriteTimer = null;
+  writeJson(CONTACTS_FILE, contactsCache);
+}
+
+function queueContactsWrite() {
+  if (contactsWriteTimer) return;
+  contactsWriteTimer = setTimeout(flushContacts, 350);
+  contactsWriteTimer.unref?.();
+}
+
+function knownContactFor(jid) {
+  if (!jid) return null;
+  return loadContacts().contacts[jid] || null;
+}
+
+function knownNameFor(jid, pushName) {
+  const savedName = knownContactFor(jid)?.name;
+  if (savedName) return savedName;
+  if (pushName && String(pushName).trim()) return String(pushName).trim().slice(0, 100);
+  return '';
+}
+
 function getDisplayName(jid, pushName) {
-  if (pushName && pushName.trim()) return pushName.trim().slice(0, 100);
+  const knownName = knownNameFor(jid, pushName);
+  if (knownName) return knownName;
   const localPart = jid.split('@')[0] || 'Conversa';
   return jid.endsWith('@g.us') ? `Grupo ${localPart}` : localPart;
+}
+
+function updateConversationContactMetadata(jid) {
+  const contact = knownContactFor(jid);
+  if (!contact) return;
+  const index = loadConversationIndex();
+  let changed = false;
+  for (const conversation of Object.values(index.conversations)) {
+    if (conversation.jid !== jid) continue;
+    if (contact.name && conversation.name !== contact.name) {
+      conversation.name = contact.name;
+      changed = true;
+    }
+    if (contact.phone && conversation.phone !== contact.phone) {
+      conversation.phone = contact.phone;
+      changed = true;
+    }
+  }
+  if (changed) queueConversationIndexWrite();
+}
+
+function rememberContacts(records) {
+  if (!Array.isArray(records)) return;
+  const directory = loadContacts();
+  for (const record of records) {
+    if (!record || typeof record !== 'object') continue;
+    const ids = [record.id, record.lid, record.phoneNumber].filter((id) => typeof id === 'string' && id);
+    if (!ids.length) continue;
+    const name = [record.name, record.verifiedName, record.notify, record.subject]
+      .find((value) => typeof value === 'string' && value.trim());
+    const phone = phoneFromJid(record.phoneNumber) || phoneFromJid(record.id) || phoneFromJid(record.lid);
+    for (const id of ids) {
+      const previous = directory.contacts[id] || {};
+      directory.contacts[id] = {
+        name: name ? name.trim().slice(0, 100) : previous.name || '',
+        phone: phone || previous.phone || '',
+      };
+      updateConversationContactMetadata(id);
+    }
+  }
+  queueContactsWrite();
 }
 
 function loadConversationIndex() {
@@ -173,6 +257,7 @@ function toPublicConversation(conversation) {
   return {
     id: conversation.id,
     name: conversation.name,
+    phone: conversation.phone || '',
     isGroup: Boolean(conversation.isGroup),
     messageCount: conversation.messageCount || 0,
     lastMessageAt: conversation.lastMessageAt || null,
@@ -197,10 +282,13 @@ function appendConversationEntry({ jid, pushName, fromMe, sender, type, text, ti
   if (audio) entry.audio = audio;
 
   const preview = entry.text.replace(/\s+/g, ' ').trim().slice(0, 140);
+  const knownName = knownNameFor(jid, jid.endsWith('@g.us') ? undefined : pushName);
+  const phone = knownContactFor(jid)?.phone || phoneFromJid(jid) || existing?.phone || '';
   index.conversations[id] = {
     id,
     jid,
-    name: existing?.name || getDisplayName(jid, pushName),
+    name: knownName || existing?.name || getDisplayName(jid, pushName),
+    phone,
     isGroup: jid.endsWith('@g.us'),
     messageCount: (existing?.messageCount || 0) + 1,
     lastMessageAt: entry.timestamp,
@@ -460,7 +548,8 @@ async function processWhatsAppMessage(message) {
 
   const fromMe = Boolean(message.key?.fromMe);
   const pushName = message.pushName;
-  const sender = fromMe ? 'Você' : (pushName || getDisplayName(jid));
+  const senderJid = message.key?.participant || jid;
+  const sender = fromMe ? 'Você' : getDisplayName(senderJid, pushName);
   const timestamp = getMessageTimestamp(message);
   const text = getMessageText(content);
 
@@ -595,6 +684,10 @@ async function connectWhatsApp() {
     activeSocket = socket;
 
     socket.ev.on('creds.update', saveCreds);
+    socket.ev.on('contacts.upsert', rememberContacts);
+    socket.ev.on('contacts.update', rememberContacts);
+    socket.ev.on('chats.upsert', rememberContacts);
+    socket.ev.on('chats.update', rememberContacts);
     socket.ev.on('connection.update', async (update) => {
       if (generation !== connectionGeneration) return;
 
@@ -621,7 +714,7 @@ async function connectWhatsApp() {
           error: null,
           reconnectAttempt: 0,
         });
-        console.log('WhatsApp conectado. Mensagens novas serão armazenadas e áudios serão transcritos.');
+        console.log('WhatsApp conectado. Mensagens novas serão armazenadas e áudios ficarão disponíveis para transcrição manual.');
         return;
       }
 
@@ -658,8 +751,10 @@ async function connectWhatsApp() {
       }
     });
 
-    socket.ev.on('messaging-history.set', ({ messages }) => {
+    socket.ev.on('messaging-history.set', ({ messages, contacts, chats }) => {
       if (!IMPORT_HISTORY) return;
+      rememberContacts(contacts);
+      rememberContacts(chats);
       console.log(`Recebido lote de histórico: ${messages.length} mensagem(ns). Importando somente localmente…`);
       for (const message of messages) {
         processWhatsAppMessage(message).catch((error) => {
@@ -853,11 +948,13 @@ app.use((error, req, res, next) => { // eslint-disable-line no-unused-vars
 process.on('SIGINT', () => {
   flushConversationIndex();
   flushProcessedMessageIds();
+  flushContacts();
   process.exit(0);
 });
 process.on('SIGTERM', () => {
   flushConversationIndex();
   flushProcessedMessageIds();
+  flushContacts();
   process.exit(0);
 });
 

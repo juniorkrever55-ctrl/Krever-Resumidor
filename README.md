@@ -30,6 +30,10 @@ Abra `http://localhost:3000`. O servidor fica em `0.0.0.0:3000`, então também 
 
 O QR não é enviado ao navegador como texto: o servidor transforma o token em imagem e disponibiliza somente a imagem temporária no painel. Esse era o principal motivo de o projeto anterior exibir QR apenas no terminal, sem uma tela para escanear.
 
+## Nomes, números e pesquisa
+
+O painel usa os contatos e chats que o WhatsApp disponibiliza na sincronização para exibir nome e número, e a busca lateral aceita ambos. Não é feita busca externa pelo número: se um contato não tiver nome salvo/disponível no WhatsApp, o painel só poderá mostrar o identificador ou número recebido. Para atualizar nomes de conversas antigas, faça um novo pareamento pelo botão **Refazer conexão / novo QR** e aguarde a sincronização terminar.
+
 ## Histórico e uso da IA
 
 Com `IMPORT_HISTORY=true` (padrão), no primeiro pareamento o app importa e salva localmente as mensagens históricas que o WhatsApp Web disponibilizar. **Essa importação de texto não chama a Groq e não consome créditos de IA.** O WhatsApp decide quanto do histórico entrega ao dispositivo conectado; portanto não há garantia técnica de receber absolutamente toda a vida da conta.
