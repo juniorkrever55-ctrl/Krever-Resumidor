@@ -40,7 +40,8 @@ const MAX_TRACKED_MESSAGE_IDS = Number(process.env.MAX_TRACKED_MESSAGE_IDS || 10
 const MAX_AUDIO_BYTES = Number(process.env.MAX_AUDIO_BYTES || 24 * 1024 * 1024);
 const MAX_SUMMARY_CHARS = Number(process.env.MAX_SUMMARY_CHARS || 50000);
 const ON_DEMAND_HISTORY_PAGE_SIZE = 50;
-const BULK_TRANSCRIPTION_DELAY_MS = 500;
+const BULK_TRANSCRIPTION_DELAY_MS = 1200;
+const BULK_TRANSCRIPTION_MAX_ATTEMPTS = 3;
 
 const DEFAULT_SUMMARY_INSTRUCTIONS = `Você é um assistente de vendas de consórcio. Transforme a conversa em um único texto corrido, profissional e objetivo, em português do Brasil — no estilo de uma evolução comercial/relatório de negociação. Use de 2 a 4 parágrafos naturais, sem títulos, listas, tópicos, questionário, campos ou frases como "Não informado".
 
@@ -774,6 +775,49 @@ function getPendingAudioStats(conversationId) {
   };
 }
 
+function waitFor(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function canRetryTranscription(error) {
+  const status = Number(error?.statusCode);
+  return !status || [429, 500, 502, 503, 504].includes(status);
+}
+
+function markAudioTranscriptionFailure(conversationId, messageId, error) {
+  const detail = String(error?.message || 'Falha desconhecida').replace(/\s+/g, ' ').slice(0, 180);
+  try {
+    updateConversationEntry(conversationId, messageId, (current) => ({
+      ...current,
+      text: '[Áudio recebido — não foi possível transcrever no lote. Você pode tentar este áudio manualmente.]',
+      audio: {
+        ...current.audio,
+        transcriptionStatus: 'failed',
+        lastTranscriptionError: detail,
+        lastTranscriptionAttemptAt: new Date().toISOString(),
+      },
+    }));
+  } catch (updateError) {
+    console.warn(`Não foi possível registrar a falha de transcrição: ${updateError.message}`);
+  }
+}
+
+async function transcribeAudioWithRetry(conversationId, messageId) {
+  let lastError;
+  for (let attempt = 1; attempt <= BULK_TRANSCRIPTION_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await transcribeStoredConversationAudio(conversationId, messageId);
+    } catch (error) {
+      lastError = error;
+      if (!canRetryTranscription(error) || attempt === BULK_TRANSCRIPTION_MAX_ATTEMPTS) break;
+      // Pausa progressiva para respeitar rate limit/instabilidades temporárias da Groq.
+      await waitFor(2000 * attempt);
+    }
+  }
+  markAudioTranscriptionFailure(conversationId, messageId, lastError);
+  throw lastError;
+}
+
 function publicBulkJob(job) {
   return {
     id: job.id,
@@ -817,7 +861,7 @@ function startBulkTranscription(conversationId) {
     for (const entry of stats.entries) {
       job.current = entry.sourceMessageId;
       try {
-        await transcribeStoredConversationAudio(conversationId, entry.sourceMessageId);
+        await transcribeAudioWithRetry(conversationId, entry.sourceMessageId);
         job.succeeded += 1;
       } catch (error) {
         job.failed += 1;

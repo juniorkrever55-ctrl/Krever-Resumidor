@@ -247,6 +247,7 @@ Quando existirem, mencione de forma clara dentro do próprio texto os dados crí
         pending: 'Áudio salvo — aguardando sua decisão',
         completed: 'Áudio transcrito',
         empty: 'Transcrição vazia — você pode tentar novamente',
+        failed: 'Transcrição em lote não concluída — tente este áudio',
         not_stored: 'Arquivo de áudio não foi salvo localmente',
         download_failed: 'Não foi possível baixar este áudio',
       };
@@ -358,9 +359,9 @@ Cancelar: resumir somente textos e áudios já transcritos.${unavailable}`);
       }
 
       if (job.status === 'failed') throw new Error('O lote de transcrição foi interrompido antes de terminar.');
-      if (job.failed) elements.summaryHint.textContent = `${job.succeeded} áudio(s) transcrito(s); ${job.failed} não puderam ser transcritos. O resumo seguirá com o conteúdo disponível.`;
-      else elements.summaryHint.textContent = `${job.succeeded} áudio(s) transcrito(s). Gerando o resumo completo…`;
       await loadConversation(conversationId, true);
+      if (job.failed) elements.summaryHint.textContent = `${job.succeeded} áudio(s) transcrito(s); ${job.failed} falharam após novas tentativas. Você pode transcrevê-los manualmente; o resumo seguirá com o conteúdo disponível.`;
+      else elements.summaryHint.textContent = `${job.succeeded} áudio(s) transcrito(s). Gerando o resumo completo…`;
     }
 
     async function summarizeConversation() {
