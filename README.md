@@ -74,4 +74,15 @@ Não existe uma API confiável para comparar toda a conta e descobrir retroativa
 - `POST /api/conversations/:id/summarize` — resumo de uma conversa armazenada.
 - `POST /api/summarize` — resumo de texto avulso.
 
+## Resumo local com Ollama
+
+No painel, selecione **Local (Ollama)** em “Motor do resumo” para resumir conversas no seu próprio computador, sem consumir tokens ou créditos da Groq. Instale o [Ollama](https://ollama.com/), baixe o modelo configurado e mantenha o serviço aberto:
+
+```powershell
+ollama pull qwen3:8b
+ollama serve
+```
+
+O app usa `http://127.0.0.1:11434` por padrão e aceita até 40.000 caracteres para o contexto local (`MAX_LOCAL_SUMMARY_CHARS`). A seleção vale para o **resumo de texto**. Transcrição de áudio e análise de imagens continuam na Groq até uma integração local específica para essas mídias.
+
 A chave da Groq permanece exclusivamente no servidor; o navegador usa apenas essas rotas locais.

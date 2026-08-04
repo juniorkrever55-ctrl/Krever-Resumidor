@@ -33,6 +33,8 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || 'llama-3.1-8b-instant';
 const GROQ_TRANSCRIPTION_MODEL = process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3-turbo';
 const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || 'qwen/qwen3.6-27b';
+const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+const OLLAMA_CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL || 'qwen3:8b';
 // Para transcrever sob demanda, o áudio precisa ficar salvo somente neste computador.
 const STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION = process.env.STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION !== 'false';
 const STORE_IMAGES_FOR_SUMMARY = process.env.STORE_IMAGES_FOR_SUMMARY !== 'false';
@@ -44,6 +46,8 @@ const MAX_AUDIO_BYTES = Number(process.env.MAX_AUDIO_BYTES || 24 * 1024 * 1024);
 // Limite conservador para caber no TPM de contas gratuitas/on-demand da Groq.
 const MAX_SUMMARY_CHARS = Math.min(Number(process.env.MAX_SUMMARY_CHARS || 12000), 12000);
 const MAX_SUBMITTED_SUMMARY_CHARS = Number(process.env.MAX_SUBMITTED_SUMMARY_CHARS || 1000000);
+const MAX_LOCAL_SUMMARY_CHARS = Number(process.env.MAX_LOCAL_SUMMARY_CHARS || 40000);
+const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 16384);
 const ON_DEMAND_HISTORY_PAGE_SIZE = 50;
 const BULK_TRANSCRIPTION_DELAY_MS = 1200;
 const BULK_TRANSCRIPTION_MAX_ATTEMPTS = 3;
@@ -1450,13 +1454,23 @@ function validateText(value, field, maximum) {
   return value.trim();
 }
 
-function trimTranscriptForGroq(text) {
-  if (text.length <= MAX_SUMMARY_CHARS) return text;
+function normalizeSummaryProvider(provider) {
+  return provider === 'ollama' ? 'ollama' : 'groq';
+}
+
+function getSummaryContextLimit(provider) {
+  return normalizeSummaryProvider(provider) === 'ollama' ? MAX_LOCAL_SUMMARY_CHARS : MAX_SUMMARY_CHARS;
+}
+
+function trimTranscriptForProvider(text, provider) {
+  const limit = getSummaryContextLimit(provider);
+  if (text.length <= limit) return text;
 
   // Mantém início e fim: o início costuma trazer objetivo/contexto e o fim, negociação/próximo passo.
-  const firstPartLength = Math.floor(MAX_SUMMARY_CHARS * 0.3);
-  const lastPartLength = MAX_SUMMARY_CHARS - firstPartLength;
-  return `${text.slice(0, firstPartLength)}\n\n[... trecho intermediário omitido para respeitar o limite da Groq ...]\n\n${text.slice(-lastPartLength)}`;
+  const firstPartLength = Math.floor(limit * 0.3);
+  const lastPartLength = limit - firstPartLength;
+  const source = normalizeSummaryProvider(provider) === 'ollama' ? 'limite local configurado' : 'limite da Groq';
+  return `${text.slice(0, firstPartLength)}\n\n[... trecho intermediário omitido para respeitar o ${source} ...]\n\n${text.slice(-lastPartLength)}`;
 }
 
 function getSummaryPrompt(instructions) {
@@ -1465,7 +1479,7 @@ function getSummaryPrompt(instructions) {
     : DEFAULT_SUMMARY_INSTRUCTIONS;
 }
 
-function estimateGroqTokens(text) {
+function estimateTokens(text) {
   // Estimativa conservadora para português. O tokenizador real do modelo pode variar.
   return Math.ceil(String(text || '').length / 3.2);
 }
@@ -1476,10 +1490,53 @@ function buildConversationTranscript(conversationId) {
     .join('\n');
 }
 
-async function summarize(text, instructions) {
+async function summarizeWithOllama(prompt, compactConversation) {
+  let response;
+  try {
+    response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: OLLAMA_CHAT_MODEL,
+        stream: false,
+        messages: [
+          { role: 'system', content: prompt },
+          { role: 'user', content: `Conversa para análise:\n\n${compactConversation}` },
+        ],
+        options: { temperature: 0.2, num_ctx: OLLAMA_NUM_CTX, num_predict: 1200 },
+      }),
+    });
+  } catch (cause) {
+    const error = new Error(`Não foi possível conectar ao Ollama em ${OLLAMA_BASE_URL}. Instale/inicie o Ollama e baixe o modelo ${OLLAMA_CHAT_MODEL}.`);
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.error || `Ollama respondeu com HTTP ${response.status}. Verifique se o modelo ${OLLAMA_CHAT_MODEL} foi baixado.`);
+    error.statusCode = response.status >= 500 ? 502 : response.status;
+    throw error;
+  }
+
+  const result = data?.message?.content?.trim();
+  if (!result) {
+    const error = new Error('O Ollama não retornou um resumo válido.');
+    error.statusCode = 502;
+    throw error;
+  }
+  return result;
+}
+
+async function summarize(text, instructions, provider) {
+  const selectedProvider = normalizeSummaryProvider(provider);
   const conversation = validateText(text, 'A conversa', MAX_SUBMITTED_SUMMARY_CHARS);
-  const compactConversation = trimTranscriptForGroq(conversation);
+  const compactConversation = trimTranscriptForProvider(conversation, selectedProvider);
   const prompt = getSummaryPrompt(instructions);
+
+  if (selectedProvider === 'ollama') {
+    return summarizeWithOllama(prompt, compactConversation);
+  }
 
   const data = await callGroq('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -1686,7 +1743,7 @@ app.post('/api/conversations/:id/audio/:messageId/transcribe', async (req, res, 
 
 app.post('/api/summarize', async (req, res, next) => {
   try {
-    const summary = await summarize(req.body?.text, req.body?.instructions);
+    const summary = await summarize(req.body?.text, req.body?.instructions, req.body?.provider);
     res.json({ summary });
   } catch (error) {
     next(error);
@@ -1699,11 +1756,12 @@ app.post('/api/conversations/:id/token-estimate', (req, res, next) => {
     const index = loadConversationIndex();
     if (!index.conversations[id]) return res.status(404).json({ error: 'Conversa não encontrada.' });
 
+    const provider = normalizeSummaryProvider(req.body?.provider);
     const transcript = buildConversationTranscript(id);
-    const compactTranscript = trimTranscriptForGroq(transcript);
+    const compactTranscript = trimTranscriptForProvider(transcript, provider);
     const prompt = getSummaryPrompt(req.body?.instructions);
-    const inputTokens = estimateGroqTokens(`${prompt}\n${compactTranscript}`);
-    const outputTokens = 900;
+    const inputTokens = estimateTokens(`${prompt}\n${compactTranscript}`);
+    const outputTokens = provider === 'ollama' ? 1200 : 900;
     return res.json({
       estimatedInputTokens: inputTokens,
       outputTokenBudget: outputTokens,
@@ -1711,7 +1769,11 @@ app.post('/api/conversations/:id/token-estimate', (req, res, next) => {
       originalCharacters: transcript.length,
       sentCharacters: compactTranscript.length,
       compacted: compactTranscript.length < transcript.length,
-      note: 'Estimativa aproximada; o tokenizador e o limite disponível da Groq podem variar.',
+      provider,
+      contextLimitCharacters: getSummaryContextLimit(provider),
+      note: provider === 'ollama'
+        ? 'Estimativa aproximada do contexto local; o consumo não usa créditos da Groq.'
+        : 'Estimativa aproximada; o tokenizador e o limite disponível da Groq podem variar.',
     });
   } catch (error) {
     return next(error);
@@ -1726,7 +1788,7 @@ app.post('/api/conversations/:id/summarize', async (req, res, next) => {
     if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
 
     const transcript = buildConversationTranscript(id);
-    const summary = await summarize(transcript, req.body?.instructions);
+    const summary = await summarize(transcript, req.body?.instructions, req.body?.provider);
     return res.json({ summary, conversation: toPublicConversation(conversation) });
   } catch (error) {
     return next(error);

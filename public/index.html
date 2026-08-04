@@ -73,6 +73,10 @@
     .summary-actions { display:flex; align-items:center; gap:12px; margin-top:11px; }
     .summary-output { margin-top:15px; padding:14px; min-height:62px; border:1px solid #29425f; border-radius:11px; color:#dce9fb; background:#091525; white-space:pre-wrap; overflow-wrap:anywhere; font-size:.87rem; line-height:1.55; }
     .token-estimate { margin-top:9px; color:#9cafc9; font-size:.75rem; line-height:1.4; }
+    .provider-row { display:flex; align-items:center; flex-wrap:wrap; gap:9px; margin-bottom:13px; }
+    .provider-row label { margin:0; }
+    .provider-select { min-height:36px; padding:7px 10px; color:var(--text); border:1px solid #304866; border-radius:9px; background:#091525; font-size:.8rem; }
+    .provider-note { color:var(--muted); font-size:.74rem; line-height:1.35; }
     .manual { margin-top:22px; padding:19px; }
     .manual-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
     .manual textarea { min-height:170px; }
@@ -123,6 +127,14 @@
         </div>
         <div class="entries" id="entries"><p class="empty">Conecte o WhatsApp e escolha uma conversa para ver o histórico armazenado.</p></div>
         <section class="summary-area">
+          <div class="provider-row">
+            <label for="ai-provider">Motor do resumo</label>
+            <select class="provider-select" id="ai-provider">
+              <option value="groq">Groq — nuvem / rápido</option>
+              <option value="ollama">Local (Ollama) — sem créditos</option>
+            </select>
+            <span class="provider-note" id="provider-note"></span>
+          </div>
           <label for="instructions">Instruções do resumo</label>
           <textarea id="instructions" rows="16">Você é um assistente de vendas de consórcio que registra notas internas de CRM. Transforme a conversa em um único texto corrido, profissional e objetivo, em português do Brasil, no estilo de evolução comercial/relatório de negociação.
 
@@ -153,7 +165,8 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
   </div>
 
   <script>
-    const state = { selectedConversationId: null, instructions: document.getElementById('instructions').value, entries: [], conversations: [] };
+    const savedProvider = localStorage.getItem('consorcio-ai-provider');
+    const state = { selectedConversationId: null, instructions: document.getElementById('instructions').value, entries: [], conversations: [], provider: savedProvider === 'ollama' ? 'ollama' : 'groq' };
     const elements = {
       headerDot: document.getElementById('header-dot'), headerStatus: document.getElementById('header-status'),
       connectionDot: document.getElementById('connection-dot'), connectionText: document.getElementById('connection-text'),
@@ -162,9 +175,18 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
       conversationList: document.getElementById('conversation-list'), conversationSearch: document.getElementById('conversation-search'), conversationTitle: document.getElementById('conversation-title'),
       conversationInfo: document.getElementById('conversation-info'), olderHistoryButton: document.getElementById('older-history-button'), entries: document.getElementById('entries'),
       summarizeButton: document.getElementById('summarize-button'), tokenEstimateButton: document.getElementById('token-estimate-button'), tokenEstimate: document.getElementById('token-estimate'), copySummaryButton: document.getElementById('copy-summary-button'), summaryHint: document.getElementById('summary-hint'),
-      summaryOutput: document.getElementById('summary-output'), instructions: document.getElementById('instructions'),
+      summaryOutput: document.getElementById('summary-output'), instructions: document.getElementById('instructions'), aiProvider: document.getElementById('ai-provider'), providerNote: document.getElementById('provider-note'),
       manualText: document.getElementById('manual-text'), manualOutput: document.getElementById('manual-output'), manualButton: document.getElementById('manual-button'),
     };
+
+    elements.aiProvider.value = state.provider;
+    function updateProviderNote() {
+      const isLocal = state.provider === 'ollama';
+      elements.providerNote.textContent = isLocal
+        ? 'Resumo no seu computador via Ollama. Áudio e imagem, quando selecionados, continuam usando Groq.'
+        : 'Resumo na Groq. Ideal para conversas curtas e respostas rápidas.';
+    }
+    updateProviderNote();
 
     const statusCopy = {
       starting: 'Iniciando a conexão com o WhatsApp…',
@@ -357,7 +379,7 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
       const conversationId = state.selectedConversationId;
       elements.tokenEstimate.textContent = 'Calculando estimativa de tokens…';
       try {
-        const data = await request(`/api/conversations/${encodeURIComponent(conversationId)}/token-estimate`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value }) });
+        const data = await request(`/api/conversations/${encodeURIComponent(conversationId)}/token-estimate`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value, provider: state.provider }) });
         if (state.selectedConversationId !== conversationId) return;
         const compacted = data.compacted ? ` Contexto compactado de ${data.originalCharacters.toLocaleString('pt-BR')} para ${data.sentCharacters.toLocaleString('pt-BR')} caracteres.` : '';
         elements.tokenEstimate.textContent = `Estimativa: ≈ ${data.estimatedInputTokens.toLocaleString('pt-BR')} tokens de entrada + até ${data.outputTokenBudget.toLocaleString('pt-BR')} de saída = ≈ ${data.estimatedTotalTokens.toLocaleString('pt-BR')} tokens.${compacted}`;
@@ -460,7 +482,7 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
         await analyzePendingImagesBeforeSummary(conversationId);
         elements.summarizeButton.textContent = 'Gerando resumo…';
         elements.summaryOutput.textContent = 'Enviando conversa para a IA…';
-        const data = await request(`/api/conversations/${encodeURIComponent(conversationId)}/summarize`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value }) });
+        const data = await request(`/api/conversations/${encodeURIComponent(conversationId)}/summarize`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value, provider: state.provider }) });
         elements.summaryOutput.textContent = data.summary;
         elements.copySummaryButton.disabled = false;
       } catch (error) { elements.summaryOutput.textContent = `Erro: ${error.message}`; elements.copySummaryButton.disabled = true; }
@@ -470,7 +492,7 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
     async function summarizeManual() {
       setButtonLoading(elements.manualButton, true, 'Gerando resumo…'); elements.manualOutput.textContent = 'Enviando texto para a IA…';
       try {
-        const data = await request('/api/summarize', { method: 'POST', body: JSON.stringify({ text: elements.manualText.value, instructions: elements.instructions.value }) });
+        const data = await request('/api/summarize', { method: 'POST', body: JSON.stringify({ text: elements.manualText.value, instructions: elements.instructions.value, provider: state.provider }) });
         elements.manualOutput.textContent = data.summary;
       } catch (error) { elements.manualOutput.textContent = `Erro: ${error.message}`; }
       finally { setButtonLoading(elements.manualButton, false); }
@@ -538,6 +560,12 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
     elements.manualButton.addEventListener('click', summarizeManual);
     elements.conversationSearch.addEventListener('input', () => renderConversations());
     elements.instructions.addEventListener('input', scheduleTokenEstimate);
+    elements.aiProvider.addEventListener('change', () => {
+      state.provider = elements.aiProvider.value === 'ollama' ? 'ollama' : 'groq';
+      localStorage.setItem('consorcio-ai-provider', state.provider);
+      updateProviderNote();
+      updateTokenEstimate();
+    });
 
     refreshStatus(); loadConversations();
     // QR expira rápido; a tela acompanha a conexão sem expor a string do QR.
