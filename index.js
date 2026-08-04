@@ -1459,12 +1459,27 @@ function trimTranscriptForGroq(text) {
   return `${text.slice(0, firstPartLength)}\n\n[... trecho intermediário omitido para respeitar o limite da Groq ...]\n\n${text.slice(-lastPartLength)}`;
 }
 
+function getSummaryPrompt(instructions) {
+  return typeof instructions === 'string' && instructions.trim()
+    ? instructions.trim().slice(0, 5000)
+    : DEFAULT_SUMMARY_INSTRUCTIONS;
+}
+
+function estimateGroqTokens(text) {
+  // Estimativa conservadora para português. O tokenizador real do modelo pode variar.
+  return Math.ceil(String(text || '').length / 3.2);
+}
+
+function buildConversationTranscript(conversationId) {
+  return loadConversationEntries(conversationId, 1000)
+    .map((entry) => `[${entry.timestamp}] ${getSummarySpeaker(entry)}: ${entry.text}`)
+    .join('\n');
+}
+
 async function summarize(text, instructions) {
   const conversation = validateText(text, 'A conversa', MAX_SUBMITTED_SUMMARY_CHARS);
   const compactConversation = trimTranscriptForGroq(conversation);
-  const prompt = typeof instructions === 'string' && instructions.trim()
-    ? instructions.trim().slice(0, 5000)
-    : DEFAULT_SUMMARY_INSTRUCTIONS;
+  const prompt = getSummaryPrompt(instructions);
 
   const data = await callGroq('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -1678,6 +1693,31 @@ app.post('/api/summarize', async (req, res, next) => {
   }
 });
 
+app.post('/api/conversations/:id/token-estimate', (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const index = loadConversationIndex();
+    if (!index.conversations[id]) return res.status(404).json({ error: 'Conversa não encontrada.' });
+
+    const transcript = buildConversationTranscript(id);
+    const compactTranscript = trimTranscriptForGroq(transcript);
+    const prompt = getSummaryPrompt(req.body?.instructions);
+    const inputTokens = estimateGroqTokens(`${prompt}\n${compactTranscript}`);
+    const outputTokens = 900;
+    return res.json({
+      estimatedInputTokens: inputTokens,
+      outputTokenBudget: outputTokens,
+      estimatedTotalTokens: inputTokens + outputTokens,
+      originalCharacters: transcript.length,
+      sentCharacters: compactTranscript.length,
+      compacted: compactTranscript.length < transcript.length,
+      note: 'Estimativa aproximada; o tokenizador e o limite disponível da Groq podem variar.',
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/conversations/:id/summarize', async (req, res, next) => {
   try {
     const id = req.params.id;
@@ -1685,9 +1725,7 @@ app.post('/api/conversations/:id/summarize', async (req, res, next) => {
     const conversation = index.conversations[id];
     if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
 
-    const transcript = loadConversationEntries(id, 1000)
-      .map((entry) => `[${entry.timestamp}] ${getSummarySpeaker(entry)}: ${entry.text}`)
-      .join('\n');
+    const transcript = buildConversationTranscript(id);
     const summary = await summarize(transcript, req.body?.instructions);
     return res.json({ summary, conversation: toPublicConversation(conversation) });
   } catch (error) {

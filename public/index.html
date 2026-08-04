@@ -72,6 +72,7 @@
     textarea { display:block; width:100%; min-height:88px; resize:vertical; padding:10px 12px; color:var(--text); border:1px solid #304866; border-radius:10px; background:#091525; line-height:1.45; font-size:.84rem; }
     .summary-actions { display:flex; align-items:center; gap:12px; margin-top:11px; }
     .summary-output { margin-top:15px; padding:14px; min-height:62px; border:1px solid #29425f; border-radius:11px; color:#dce9fb; background:#091525; white-space:pre-wrap; overflow-wrap:anywhere; font-size:.87rem; line-height:1.55; }
+    .token-estimate { margin-top:9px; color:#9cafc9; font-size:.75rem; line-height:1.4; }
     .manual { margin-top:22px; padding:19px; }
     .manual-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
     .manual textarea { min-height:170px; }
@@ -134,7 +135,8 @@ Na lista, priorize: CPF ou CNPJ, renda mensal, valor da carta/crédito, parcelas
 Destaque apenas informações realmente importantes: objetivo do cliente, bem/crédito desejado, situação de aluguel, renda mensal, capacidade e parcela negociada, prazo/meta de contemplação, valor da carta, valor disponível para lance de recurso próprio, profissão, participação de cônjuge, condição apresentada, objeção/restrição, motivo de não fechamento, status e próximo passo. Não invente, estime ou complete informação ausente; simplesmente não a mencione.
 
 Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente informado (11 dígitos) e de CNPJ somente um CNPJ explicitamente informado (14 dígitos); não suponha um tipo de documento. Quando existirem, mencione de forma clara na narrativa e também na lista os dados críticos como renda mensal e documento. Nunca trate o nome/identificador do remetente no cabeçalho da conversa como dado comercial: números técnicos de LID/JID não são CPF, CNPJ, renda, lance ou qualquer informação do cliente. Use apenas informações presentes no conteúdo das mensagens. Explique a estratégia comercial apresentada, o desfecho da negociação e o próximo passo de forma factual. O resultado deve ser uma nota interna de CRM, nunca uma resposta, proposta ou texto de atendimento ao cliente.</textarea>
-          <div class="summary-actions"><button class="button" type="button" id="summarize-button" disabled>Gerar resumo da conversa</button><button class="button secondary" type="button" id="copy-summary-button" disabled>Copiar resumo</button><span class="hint" id="summary-hint">Escolha uma conversa para resumir.</span></div>
+          <div class="summary-actions"><button class="button" type="button" id="summarize-button" disabled>Gerar resumo da conversa</button><button class="button secondary" type="button" id="token-estimate-button" disabled>Estimar tokens</button><button class="button secondary" type="button" id="copy-summary-button" disabled>Copiar resumo</button><span class="hint" id="summary-hint">Escolha uma conversa para resumir.</span></div>
+          <div class="token-estimate" id="token-estimate">Selecione uma conversa para estimar o uso de tokens.</div>
           <div class="summary-output" id="summary-output" aria-live="polite">O resumo aparecerá aqui.</div>
         </section>
       </main>
@@ -159,7 +161,7 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
       groqWarning: document.getElementById('groq-warning'), resetButton: document.getElementById('reset-button'), newAccountButton: document.getElementById('new-account-button'),
       conversationList: document.getElementById('conversation-list'), conversationSearch: document.getElementById('conversation-search'), conversationTitle: document.getElementById('conversation-title'),
       conversationInfo: document.getElementById('conversation-info'), olderHistoryButton: document.getElementById('older-history-button'), entries: document.getElementById('entries'),
-      summarizeButton: document.getElementById('summarize-button'), copySummaryButton: document.getElementById('copy-summary-button'), summaryHint: document.getElementById('summary-hint'),
+      summarizeButton: document.getElementById('summarize-button'), tokenEstimateButton: document.getElementById('token-estimate-button'), tokenEstimate: document.getElementById('token-estimate'), copySummaryButton: document.getElementById('copy-summary-button'), summaryHint: document.getElementById('summary-hint'),
       summaryOutput: document.getElementById('summary-output'), instructions: document.getElementById('instructions'),
       manualText: document.getElementById('manual-text'), manualOutput: document.getElementById('manual-output'), manualButton: document.getElementById('manual-button'),
     };
@@ -338,14 +340,35 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
         elements.conversationTitle.textContent = data.conversation.name;
         elements.conversationInfo.textContent = `${data.conversation.messageCount} mensagem(ns) registrada(s) · ${data.conversation.isGroup ? 'grupo' : 'conversa individual'}`;
         elements.summarizeButton.disabled = false;
+        elements.tokenEstimateButton.disabled = false;
         elements.olderHistoryButton.disabled = false;
         elements.summaryHint.textContent = 'A IA receberá as mensagens registradas desta conversa.';
         if (!preserveSummary) {
           elements.summaryOutput.textContent = 'O resumo aparecerá aqui.';
           elements.copySummaryButton.disabled = true;
         }
-        renderEntries(data.entries); loadConversations();
+        renderEntries(data.entries); loadConversations(); updateTokenEstimate();
       } catch (error) { elements.summaryOutput.textContent = `Erro ao abrir conversa: ${error.message}`; }
+    }
+
+    let tokenEstimateTimer;
+    async function updateTokenEstimate() {
+      if (!state.selectedConversationId) return;
+      const conversationId = state.selectedConversationId;
+      elements.tokenEstimate.textContent = 'Calculando estimativa de tokens…';
+      try {
+        const data = await request(`/api/conversations/${encodeURIComponent(conversationId)}/token-estimate`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value }) });
+        if (state.selectedConversationId !== conversationId) return;
+        const compacted = data.compacted ? ` Contexto compactado de ${data.originalCharacters.toLocaleString('pt-BR')} para ${data.sentCharacters.toLocaleString('pt-BR')} caracteres.` : '';
+        elements.tokenEstimate.textContent = `Estimativa: ≈ ${data.estimatedInputTokens.toLocaleString('pt-BR')} tokens de entrada + até ${data.outputTokenBudget.toLocaleString('pt-BR')} de saída = ≈ ${data.estimatedTotalTokens.toLocaleString('pt-BR')} tokens.${compacted}`;
+      } catch (error) {
+        elements.tokenEstimate.textContent = `Não foi possível estimar tokens: ${error.message}`;
+      }
+    }
+
+    function scheduleTokenEstimate() {
+      clearTimeout(tokenEstimateTimer);
+      tokenEstimateTimer = setTimeout(updateTokenEstimate, 450);
     }
 
     async function requestOlderHistory() {
@@ -470,6 +493,8 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
           elements.conversationInfo.textContent = 'A nova conta começará a preencher conversas após a sincronização.';
           elements.entries.textContent = 'Histórico local apagado. Aguarde a sincronização da nova conta.';
           elements.summarizeButton.disabled = true;
+          elements.tokenEstimateButton.disabled = true;
+          elements.tokenEstimate.textContent = 'Selecione uma conversa para estimar o uso de tokens.';
           elements.copySummaryButton.disabled = true;
           elements.olderHistoryButton.disabled = true;
         }
@@ -507,10 +532,12 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
     }
 
     elements.summarizeButton.addEventListener('click', summarizeConversation);
+    elements.tokenEstimateButton.addEventListener('click', updateTokenEstimate);
     elements.copySummaryButton.addEventListener('click', copySummary);
     elements.olderHistoryButton.addEventListener('click', requestOlderHistory);
     elements.manualButton.addEventListener('click', summarizeManual);
     elements.conversationSearch.addEventListener('input', () => renderConversations());
+    elements.instructions.addEventListener('input', scheduleTokenEstimate);
 
     refreshStatus(); loadConversations();
     // QR expira rápido; a tela acompanha a conexão sem expor a string do QR.
