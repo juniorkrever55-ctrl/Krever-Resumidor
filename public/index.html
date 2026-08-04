@@ -65,6 +65,8 @@
     .audio-action { min-height:32px; padding:6px 10px; color:#07111f; border-radius:8px; background:var(--cyan); font-size:.76rem; font-weight:800; }
     .audio-action:disabled { opacity:.55; cursor:wait; }
     .audio-note { color:var(--muted); font-size:.75rem; line-height:1.35; }
+    .image-preview { display:block; width:min(100%,300px); max-height:230px; margin:8px 0; border:1px solid #304866; border-radius:8px; object-fit:contain; background:#091525; }
+    .image-status { color:#c4a8ff; font-size:.72rem; font-weight:750; text-transform:uppercase; letter-spacing:.05em; }
     .summary-area { padding:18px 19px 20px; border-top:1px solid var(--line); }
     label { display:block; margin-bottom:7px; color:#b9c9df; font-size:.78rem; font-weight:750; }
     textarea { display:block; width:100%; min-height:88px; resize:vertical; padding:10px 12px; color:var(--text); border:1px solid #304866; border-radius:10px; background:#091525; line-height:1.45; font-size:.84rem; }
@@ -260,6 +262,17 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
       return labels[status] || 'Áudio';
     }
 
+    function imageStatusLabel(status) {
+      const labels = {
+        pending: 'Imagem salva — aguardando análise no resumo',
+        completed: 'Imagem analisada pela IA',
+        failed: 'A análise da imagem não foi concluída',
+        not_stored: 'Imagem não foi salva localmente',
+        download_failed: 'Não foi possível baixar esta imagem',
+      };
+      return labels[status] || 'Imagem';
+    }
+
     async function transcribeAudioEntry(entry, button) {
       if (!state.selectedConversationId || !entry.sourceMessageId) return;
       if (!confirm('Transcrever este áudio vai enviar somente este arquivo para a Groq e consumir créditos. Deseja continuar?')) return;
@@ -300,6 +313,17 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
             const note = document.createElement('span'); note.className = 'audio-note'; note.textContent = 'Este arquivo não está disponível localmente para reprodução ou transcrição.'; tools.append(note);
           }
           message.append(tools);
+        }
+
+        if (entry.type === 'image') {
+          const imageLabel = document.createElement('div'); imageLabel.className = 'image-status'; imageLabel.textContent = imageStatusLabel(entry.image?.analysisStatus); message.append(imageLabel);
+          if (entry.image?.fileName && entry.sourceMessageId) {
+            const preview = document.createElement('img'); preview.className = 'image-preview'; preview.loading = 'lazy'; preview.alt = 'Imagem recebida na conversa';
+            preview.src = `/api/conversations/${encodeURIComponent(state.selectedConversationId)}/image/${encodeURIComponent(entry.sourceMessageId)}`;
+            message.append(preview);
+          } else {
+            const note = document.createElement('div'); note.className = 'audio-note'; note.textContent = 'Este arquivo não está disponível localmente para análise.'; message.append(note);
+          }
         }
 
         const text = document.createElement('div'); text.className = 'message-text'; text.textContent = entry.text; message.append(text); elements.entries.append(message);
@@ -373,6 +397,35 @@ Cancelar: resumir somente textos e áudios já transcritos.${unavailable}`);
       else elements.summaryHint.textContent = `${job.succeeded} áudio(s) transcrito(s). Gerando o resumo completo…`;
     }
 
+    async function analyzePendingImagesBeforeSummary(conversationId) {
+      const stats = await request(`/api/conversations/${encodeURIComponent(conversationId)}/image/pending`);
+      if (!stats.available) {
+        if (stats.unavailable) elements.summaryHint.textContent = `${stats.unavailable} imagem(ns) não estão disponíveis localmente e não entrarão no resumo.`;
+        return;
+      }
+
+      const unavailable = stats.unavailable ? ` ${stats.unavailable} imagem(ns) sem arquivo local serão ignoradas.` : '';
+      const shouldAnalyze = confirm(`Esta conversa tem ${stats.available} imagem(ns) ainda não analisada(s).
+
+OK: analisar todas antes de resumir (consome créditos da Groq).
+Cancelar: resumir sem usar as imagens.${unavailable}`);
+      if (!shouldAnalyze) return;
+
+      const started = await request(`/api/conversations/${encodeURIComponent(conversationId)}/image/analyze-all`, { method: 'POST', body: '{}' });
+      let job = started.job;
+      while (job.status === 'running') {
+        elements.summarizeButton.textContent = `Analisando imagens ${job.processed}/${job.total}…`;
+        await wait(900);
+        const status = await request(`/api/image-analysis-jobs/${encodeURIComponent(job.id)}`);
+        job = status.job;
+      }
+
+      if (job.status === 'failed') throw new Error('O lote de análise de imagens foi interrompido antes de terminar.');
+      await loadConversation(conversationId, true);
+      if (job.failed) elements.summaryHint.textContent = `${job.succeeded} imagem(ns) analisada(s); ${job.failed} falharam. O resumo seguirá com o conteúdo disponível.`;
+      else elements.summaryHint.textContent = `${job.succeeded} imagem(ns) analisada(s). Gerando o resumo completo…`;
+    }
+
     async function summarizeConversation() {
       if (!state.selectedConversationId) return;
       const conversationId = state.selectedConversationId;
@@ -381,6 +434,7 @@ Cancelar: resumir somente textos e áudios já transcritos.${unavailable}`);
       elements.summaryOutput.textContent = 'Verificando textos e áudios disponíveis…';
       try {
         await transcribePendingAudiosBeforeSummary(conversationId);
+        await analyzePendingImagesBeforeSummary(conversationId);
         elements.summarizeButton.textContent = 'Gerando resumo…';
         elements.summaryOutput.textContent = 'Enviando conversa para a IA…';
         const data = await request(`/api/conversations/${encodeURIComponent(conversationId)}/summarize`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value }) });

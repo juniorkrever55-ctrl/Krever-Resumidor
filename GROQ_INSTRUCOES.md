@@ -20,10 +20,11 @@ A chave não deve ficar em `index.js`, no HTML, em commits ou ser enviada pelo n
 
 - **Resumo:** `llama-3.1-8b-instant` (configurável com `GROQ_CHAT_MODEL`)
 - **Áudio:** `whisper-large-v3-turbo` (configurável com `GROQ_TRANSCRIPTION_MODEL`)
+- **Imagens/simulações:** `qwen/qwen3.6-27b` (configurável com `GROQ_VISION_MODEL`)
 
-Os áudios recebidos são baixados e guardados localmente em `data/audio/` para você ouvir no painel. Eles **não são enviados à Groq automaticamente**. A Groq só é chamada quando você clica em **Transcrever este áudio** ou no botão de resumo; a transcrição escolhida passa a fazer parte da conversa que será resumida.
+Os áudios recebidos são baixados e guardados localmente em `data/audio/` para você ouvir no painel. Eles **não são enviados à Groq automaticamente**. Imagens de simulação ficam em `data/images/` e também só seguem para o modelo de visão após confirmação ao gerar o resumo. A Groq é chamada quando você transcreve/análisa arquivos ou gera um resumo; as informações extraídas passam a fazer parte da conversa resumida.
 
-A importação de textos de conversas anteriores também é local e **não** chama a Groq. Mantenha `STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION=true` no `.env` para que áudios novos e históricos disponíveis possam ser reproduzidos e transcritos sob demanda. Como os arquivos podem conter dados pessoais, `data/` permanece fora do Git.
+A importação de textos de conversas anteriores também é local e **não** chama a Groq. Mantenha `STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION=true` e `STORE_IMAGES_FOR_SUMMARY=true` no `.env` para que mídias novas e históricas disponíveis possam ser analisadas sob demanda. Como os arquivos podem conter dados pessoais, `data/` permanece fora do Git.
 
 ## Segurança importante
 

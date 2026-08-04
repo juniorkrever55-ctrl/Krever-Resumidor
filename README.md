@@ -43,7 +43,8 @@ Em uma conversa selecionada, o botão **Buscar 50 anteriores** pede ao WhatsApp 
 
 - **Texto histórico:** é apenas gravado em `data/`; não vai para a IA automaticamente.
 - **Qualquer áudio recebido:** é guardado localmente em `data/audio/` para aparecer com player no painel. Isso não chama a Groq. Na conversa, clique em **Transcrever este áudio** somente nos áudios que desejar enviar à IA.
-- **Transcrição em lote:** ao clicar em **Gerar resumo da conversa**, se houver áudios ainda pendentes, o painel pergunta se deve transcrever todos os arquivos locais disponíveis daquela conversa. Confirmar envia os áudios um a um para a Groq e consome uma requisição por áudio; cancelar gera o resumo somente com textos e transcrições já existentes.
+- **Imagens de simulação:** são guardadas em `data/images/`, aparecem como prévia na conversa e não são enviadas automaticamente à IA.
+- **Transcrição/análise em lote:** ao clicar em **Gerar resumo da conversa**, o painel pergunta se deve transcrever todos os áudios e analisar todas as imagens locais pendentes. Confirmar envia os arquivos um a um para a Groq e consome uma requisição por áudio/imagem; cancelar gera o resumo somente com textos, transcrições e análises já existentes.
 - **Resumo:** só chama a Groq quando você clica em **Gerar resumo da conversa**. Para controlar custo e contexto, cada resumo usa as últimas 1.000 mensagens registradas e no máximo 50.000 caracteres. Um novo clique faz uma nova chamada.
 
 Para o modo manual funcionar, `STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION=true` deve permanecer no `.env` (é o padrão). Se definir `false`, o sistema não guardará os áudios, nem poderá reproduzi-los ou transcrevê-los depois. Para áudios recebidos antes desta atualização, faça **Refazer conexão / novo QR**: se o WhatsApp reenviar a mídia no histórico, o app a anexa à conversa existente sem duplicar os textos.
@@ -57,7 +58,7 @@ Não existe uma API confiável para comparar toda a conta e descobrir retroativa
 ## O que é salvo
 
 - Conversas, histórico importado e transcrições são salvos localmente em `data/`, que está ignorada pelo Git.
-- Os áudios recebidos ficam em `data/audio/` somente para reprodução e transcrição manual. Essa pasta também é ignorada pelo Git.
+- Os áudios recebidos ficam em `data/audio/` somente para reprodução e transcrição manual. As imagens ficam em `data/images/` para análise opcional. Essas pastas também são ignoradas pelo Git.
 - As credenciais da sessão ficam em `auth/`, também ignorada pelo Git.
 
 ## APIs locais
@@ -68,6 +69,7 @@ Não existe uma API confiável para comparar toda a conta e descobrir retroativa
 - `POST /api/conversations/:id/history` — pede uma página de até 50 mensagens mais antigas ao WhatsApp.
 - `GET /api/conversations/:id/audio/pending` — quantidade de áudios disponíveis para transcrição em lote.
 - `POST /api/conversations/:id/audio/transcribe-all` — inicia a transcrição manual em lote.
+- `POST /api/conversations/:id/image/analyze-all` — inicia a análise de imagens da conversa em lote.
 - `POST /api/conversations/:id/summarize` — resumo de uma conversa armazenada.
 - `POST /api/summarize` — resumo de texto avulso.
 

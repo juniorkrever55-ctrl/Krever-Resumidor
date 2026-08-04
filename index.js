@@ -24,6 +24,7 @@ const AUTH_DIR = path.resolve(process.env.AUTH_DIR || path.join(ROOT_DIR, 'auth'
 const DATA_DIR = path.join(ROOT_DIR, 'data');
 const CONVERSATIONS_DIR = path.join(DATA_DIR, 'conversations');
 const AUDIO_DIR = path.join(DATA_DIR, 'audio');
+const IMAGE_DIR = path.join(DATA_DIR, 'images');
 const CONVERSATIONS_INDEX_FILE = path.join(DATA_DIR, 'conversations.json');
 const PROCESSED_MESSAGE_IDS_FILE = path.join(DATA_DIR, 'processed-message-ids.json');
 const CONTACTS_FILE = path.join(DATA_DIR, 'contacts.json');
@@ -31,8 +32,10 @@ const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || 'llama-3.1-8b-instant';
 const GROQ_TRANSCRIPTION_MODEL = process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3-turbo';
+const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || 'qwen/qwen3.6-27b';
 // Para transcrever sob demanda, o áudio precisa ficar salvo somente neste computador.
 const STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION = process.env.STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION !== 'false';
+const STORE_IMAGES_FOR_SUMMARY = process.env.STORE_IMAGES_FOR_SUMMARY !== 'false';
 const WHATSAPP_LOG_LEVEL = process.env.DEBUG_WHATSAPP === 'true' ? 'info' : 'silent';
 // O histórico é importado localmente; não chama IA.
 const IMPORT_HISTORY = process.env.IMPORT_HISTORY !== 'false';
@@ -42,6 +45,7 @@ const MAX_SUMMARY_CHARS = Number(process.env.MAX_SUMMARY_CHARS || 50000);
 const ON_DEMAND_HISTORY_PAGE_SIZE = 50;
 const BULK_TRANSCRIPTION_DELAY_MS = 1200;
 const BULK_TRANSCRIPTION_MAX_ATTEMPTS = 3;
+const MAX_VISION_IMAGE_BYTES = Number(process.env.MAX_VISION_IMAGE_BYTES || 14 * 1024 * 1024);
 
 const DEFAULT_SUMMARY_INSTRUCTIONS = `Você é um assistente de vendas de consórcio que registra notas internas de CRM. Transforme a conversa em um único texto corrido, profissional e objetivo, em português do Brasil, no estilo de evolução comercial/relatório de negociação.
 
@@ -78,6 +82,8 @@ const pendingTranscriptions = new Map();
 const onDemandHistoryRequestAt = new Map();
 const bulkTranscriptionJobs = new Map();
 const activeBulkJobByConversation = new Map();
+const bulkImageJobs = new Map();
+const activeBulkImageJobByConversation = new Map();
 
 ensureDirectories();
 
@@ -85,6 +91,7 @@ function ensureDirectories() {
   fs.mkdirSync(AUTH_DIR, { recursive: true });
   fs.mkdirSync(CONVERSATIONS_DIR, { recursive: true });
   if (STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION) fs.mkdirSync(AUDIO_DIR, { recursive: true });
+  if (STORE_IMAGES_FOR_SUMMARY) fs.mkdirSync(IMAGE_DIR, { recursive: true });
 }
 
 function clearLocalConversationHistory() {
@@ -311,7 +318,7 @@ function toPublicEntry(entry) {
   };
 }
 
-function appendConversationEntry({ jid, pushName, fromMe, sender, type, text, timestamp, audio, sourceMessageId }) {
+function appendConversationEntry({ jid, pushName, fromMe, sender, type, text, timestamp, audio, image, sourceMessageId }) {
   const id = getConversationId(jid);
   const index = loadConversationIndex();
   const existing = index.conversations[id];
@@ -326,6 +333,7 @@ function appendConversationEntry({ jid, pushName, fromMe, sender, type, text, ti
   };
 
   if (audio) entry.audio = audio;
+  if (image) entry.image = image;
 
   const preview = entry.text.replace(/\s+/g, ' ').trim().slice(0, 140);
   const knownName = knownNameFor(jid, jid.endsWith('@g.us') ? undefined : pushName);
@@ -422,9 +430,53 @@ function updateConversationEntry(id, messageId, update) {
   return after;
 }
 
+function getImageEntry(id, messageId) {
+  const entry = readAllConversationEntries(id)
+    .find((item) => item.type === 'image' && item.sourceMessageId === messageId);
+  if (!entry) {
+    const error = new Error('Imagem não encontrada nesta conversa.');
+    error.statusCode = 404;
+    throw error;
+  }
+  return entry;
+}
+
+function updateImageEntry(id, messageId, update) {
+  const entries = readAllConversationEntries(id);
+  const position = entries.findIndex((item) => item.type === 'image' && item.sourceMessageId === messageId);
+  if (position === -1) {
+    const error = new Error('Imagem não encontrada nesta conversa.');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const before = entries[position];
+  const after = update({ ...before, image: { ...(before.image || {}) } });
+  entries[position] = after;
+  writeConversationEntries(id, entries);
+
+  const index = loadConversationIndex();
+  const conversation = index.conversations[id];
+  if (conversation && conversation.lastMessageAt === before.timestamp) {
+    conversation.preview = String(after.text || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+    queueConversationIndexWrite();
+  }
+  return after;
+}
+
 function deleteStoredAudio(entry) {
   const filePath = getAudioFilePath(entry.audio?.fileName);
   if (filePath) fs.rmSync(filePath, { force: true });
+}
+
+function deleteStoredImage(entry) {
+  const filePath = getImageFilePath(entry.image?.fileName);
+  if (filePath) fs.rmSync(filePath, { force: true });
+}
+
+function deleteStoredMedia(entry) {
+  if (entry.type === 'audio') deleteStoredAudio(entry);
+  if (entry.type === 'image') deleteStoredImage(entry);
 }
 
 function removeConversationEntries(conversationId, messageIds) {
@@ -435,7 +487,7 @@ function removeConversationEntries(conversationId, messageIds) {
   const removed = entries.filter((entry) => ids.has(entry.sourceMessageId));
   if (!removed.length) return 0;
 
-  removed.forEach(deleteStoredAudio);
+  removed.forEach(deleteStoredMedia);
   const remaining = entries.filter((entry) => !ids.has(entry.sourceMessageId));
   const index = loadConversationIndex();
 
@@ -462,7 +514,7 @@ function removeEntireConversation(jid) {
   const conversationId = getConversationId(jid);
   const entries = readAllConversationEntries(conversationId);
   if (!entries.length) return 0;
-  entries.forEach(deleteStoredAudio);
+  entries.forEach(deleteStoredMedia);
   const file = getConversationFile(conversationId);
   if (file) fs.rmSync(file, { force: true });
   const index = loadConversationIndex();
@@ -543,6 +595,24 @@ function getAudioFilePath(fileName) {
   return path.join(AUDIO_DIR, fileName);
 }
 
+function extensionForImageMimeType(mimeType) {
+  const type = (mimeType || '').toLowerCase();
+  if (type.includes('png')) return 'png';
+  if (type.includes('webp')) return 'webp';
+  if (type.includes('gif')) return 'gif';
+  return 'jpg';
+}
+
+function safeImageFileName(conversationId, messageId, mimeType) {
+  const safeMessageId = String(messageId || crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 160);
+  return `${conversationId}-${safeMessageId}.${extensionForImageMimeType(mimeType)}`;
+}
+
+function getImageFilePath(fileName) {
+  if (typeof fileName !== 'string' || !/^[a-f0-9]{24}-[a-zA-Z0-9_-]+\.(jpg|png|webp|gif)$/i.test(fileName)) return null;
+  return path.join(IMAGE_DIR, fileName);
+}
+
 function getMessageTimestamp(message) {
   const value = message.messageTimestamp;
   const seconds = typeof value === 'object' && value?.toNumber ? value.toNumber() : Number(value);
@@ -565,6 +635,10 @@ function getAudioContent(content) {
   const document = content?.documentMessage;
   if (document && /^audio\//i.test(document.mimetype || '')) return document;
   return null;
+}
+
+function getImageContent(content) {
+  return content?.imageMessage || null;
 }
 
 function extensionForMimeType(mimeType) {
@@ -659,6 +733,89 @@ async function storeAudioForManualTranscription(message, audioContent, conversat
   return { mimeType, fileName, bytes: buffer.length, transcriptionStatus: 'pending' };
 }
 
+async function storeImageForSummary(message, imageContent, conversationId) {
+  const mimeType = imageContent.mimetype || 'image/jpeg';
+  if (!STORE_IMAGES_FOR_SUMMARY) return { mimeType, analysisStatus: 'not_stored' };
+
+  const fileName = safeImageFileName(conversationId, message.key?.id, mimeType);
+  const filePath = getImageFilePath(fileName);
+  if (!filePath) throw new Error('Não foi possível preparar o arquivo de imagem.');
+  if (fs.existsSync(filePath)) {
+    return { mimeType, fileName, bytes: fs.statSync(filePath).size, analysisStatus: 'pending' };
+  }
+
+  const buffer = await downloadMediaMessage(message, 'buffer', {});
+  fs.mkdirSync(IMAGE_DIR, { recursive: true });
+  fs.writeFileSync(filePath, buffer, { mode: 0o600 });
+  return { mimeType, fileName, bytes: buffer.length, analysisStatus: 'pending' };
+}
+
+async function analyzeImageBuffer(buffer, mimeType) {
+  if (!GROQ_API_KEY) {
+    const error = new Error('GROQ_API_KEY não configurada. Configure a chave antes de analisar imagens.');
+    error.statusCode = 503;
+    throw error;
+  }
+  if (buffer.length > MAX_VISION_IMAGE_BYTES) {
+    const error = new Error(`A imagem excede o limite configurado de ${Math.floor(MAX_VISION_IMAGE_BYTES / 1024 / 1024)} MB para análise.`);
+    error.statusCode = 413;
+    throw error;
+  }
+
+  const base64 = buffer.toString('base64');
+  const data = await callGroq('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: GROQ_VISION_MODEL,
+      temperature: 0.1,
+      messages: [
+        {
+          role: 'system',
+          content: 'Você analisa imagens de simulação de consórcio para uma nota interna de CRM. Extraia somente informações visualmente legíveis e relevantes: administradora, crédito/carta, parcela, prazo, taxa/condições, lance de recurso próprio quando estiver explicitamente descrito e observações. Não invente valores. Não confunda lance embutido, lance fidelidade, parcela ou taxa com lance de recurso próprio. Responda em português, de forma factual e concisa.',
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Analise esta imagem enviada na conversa e descreva apenas os dados de simulação de consórcio que puder ler.' },
+            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+          ],
+        },
+      ],
+    }),
+  });
+
+  const analysis = data?.choices?.[0]?.message?.content?.trim();
+  if (!analysis) {
+    const error = new Error('A Groq não retornou uma análise válida para a imagem.');
+    error.statusCode = 502;
+    throw error;
+  }
+  return analysis;
+}
+
+async function analyzeStoredConversationImage(conversationId, messageId) {
+  const entry = getImageEntry(conversationId, messageId);
+  if (entry.image?.analysisStatus === 'completed') return entry;
+  const filePath = getImageFilePath(entry.image?.fileName);
+  if (!filePath || !fs.existsSync(filePath)) {
+    const error = new Error('O arquivo local desta imagem não está disponível para análise.');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const analysis = await analyzeImageBuffer(fs.readFileSync(filePath), entry.image?.mimeType || 'image/jpeg');
+  return updateImageEntry(conversationId, messageId, (current) => ({
+    ...current,
+    text: `[Imagem analisada] ${analysis}`,
+    image: {
+      ...current.image,
+      analysisStatus: 'completed',
+      analyzedAt: new Date().toISOString(),
+    },
+  }));
+}
+
 async function hydrateStoredAudioIfNeeded(message, content, jid, sourceMessageId) {
   const audioContent = getAudioContent(content);
   if (!audioContent || !sourceMessageId) return;
@@ -693,6 +850,54 @@ async function hydrateStoredAudioIfNeeded(message, content, jid, sourceMessageId
   }
 }
 
+async function hydrateStoredImageIfNeeded(message, content, jid, sourceMessageId) {
+  const imageContent = getImageContent(content);
+  if (!imageContent || !sourceMessageId) return;
+
+  const conversationId = getConversationId(jid);
+  let existing;
+  try {
+    existing = getImageEntry(conversationId, sourceMessageId);
+    if (existing.image?.fileName) return;
+  } catch {
+    existing = null;
+  }
+
+  try {
+    const storedImage = await storeImageForSummary(message, imageContent, conversationId);
+    if (existing) {
+      const wasAnalyzed = existing.image?.analysisStatus === 'completed';
+      updateImageEntry(conversationId, sourceMessageId, (current) => ({
+        ...current,
+        text: wasAnalyzed ? current.text : '[Imagem recebida — será analisada se você confirmar ao gerar o resumo.]',
+        image: {
+          ...current.image,
+          ...storedImage,
+          analysisStatus: wasAnalyzed ? 'completed' : storedImage.analysisStatus,
+        },
+      }));
+      return;
+    }
+
+    const fromMe = Boolean(message.key?.fromMe);
+    const pushName = message.pushName;
+    const senderJid = message.key?.participant || jid;
+    appendConversationEntry({
+      jid,
+      pushName,
+      fromMe,
+      sender: fromMe ? 'Você' : getDisplayName(senderJid, pushName),
+      type: 'image',
+      text: '[Imagem recebida — será analisada se você confirmar ao gerar o resumo.]',
+      timestamp: getMessageTimestamp(message),
+      sourceMessageId,
+      image: storedImage,
+    });
+  } catch (error) {
+    console.error(`Não foi possível recuperar uma imagem histórica: ${error.message}`);
+  }
+}
+
 async function processWhatsAppMessage(message) {
   const jid = message.key?.remoteJid;
   const sourceMessageId = message.key?.id;
@@ -704,6 +909,7 @@ async function processWhatsAppMessage(message) {
     // Caso o histórico seja sincronizado novamente, completa áudios antigos que foram
     // registrados antes de existir o modo manual, sem duplicar os textos.
     await hydrateStoredAudioIfNeeded(message, content, jid, sourceMessageId);
+    await hydrateStoredImageIfNeeded(message, content, jid, sourceMessageId);
     return;
   }
 
@@ -722,36 +928,62 @@ async function processWhatsAppMessage(message) {
     appendConversationEntry({ jid, pushName, fromMe, sender, type: 'text', text, timestamp, sourceMessageId });
   }
 
-  const audioContent = getAudioContent(content);
-  if (!audioContent) return;
-
   const conversationId = getConversationId(jid);
-  let audio;
-  try {
-    // Guardar o arquivo é local e não chama a Groq. A transcrição só ocorre no botão do painel.
-    audio = await storeAudioForManualTranscription(message, audioContent, conversationId);
-  } catch (error) {
-    console.error(`Não foi possível salvar um áudio de ${getDisplayName(jid, pushName)}: ${error.message}`);
-    audio = { mimeType: audioContent.mimetype || 'audio/ogg', transcriptionStatus: 'download_failed' };
+  const audioContent = getAudioContent(content);
+  if (audioContent) {
+    let audio;
+    try {
+      // Guardar o arquivo é local e não chama a Groq. A transcrição só ocorre no botão do painel.
+      audio = await storeAudioForManualTranscription(message, audioContent, conversationId);
+    } catch (error) {
+      console.error(`Não foi possível salvar um áudio de ${getDisplayName(jid, pushName)}: ${error.message}`);
+      audio = { mimeType: audioContent.mimetype || 'audio/ogg', transcriptionStatus: 'download_failed' };
+    }
+
+    const pendingCopy = audio.transcriptionStatus === 'pending'
+      ? '[Áudio recebido — escolha “Transcrever este áudio” se quiser enviar para a IA.]'
+      : '[Áudio recebido — o arquivo não está disponível para transcrição manual.]';
+    appendConversationEntry({
+      jid,
+      pushName,
+      fromMe,
+      sender,
+      type: 'audio',
+      text: pendingCopy,
+      timestamp,
+      sourceMessageId,
+      audio: {
+        ...audio,
+        seconds: Number(audioContent.seconds) || null,
+      },
+    });
   }
 
-  const pendingCopy = audio.transcriptionStatus === 'pending'
-    ? '[Áudio recebido — escolha “Transcrever este áudio” se quiser enviar para a IA.]'
-    : '[Áudio recebido — o arquivo não está disponível para transcrição manual.]';
-  appendConversationEntry({
-    jid,
-    pushName,
-    fromMe,
-    sender,
-    type: 'audio',
-    text: pendingCopy,
-    timestamp,
-    sourceMessageId,
-    audio: {
-      ...audio,
-      seconds: Number(audioContent.seconds) || null,
-    },
-  });
+  const imageContent = getImageContent(content);
+  if (imageContent) {
+    let image;
+    try {
+      // A imagem é salva localmente; a análise de visão só acontece após confirmação no resumo.
+      image = await storeImageForSummary(message, imageContent, conversationId);
+    } catch (error) {
+      console.error(`Não foi possível salvar uma imagem de ${getDisplayName(jid, pushName)}: ${error.message}`);
+      image = { mimeType: imageContent.mimetype || 'image/jpeg', analysisStatus: 'download_failed' };
+    }
+    const pendingCopy = image.analysisStatus === 'pending'
+      ? '[Imagem recebida — será analisada se você confirmar ao gerar o resumo.]'
+      : '[Imagem recebida — o arquivo não está disponível para análise.]';
+    appendConversationEntry({
+      jid,
+      pushName,
+      fromMe,
+      sender,
+      type: 'image',
+      text: pendingCopy,
+      timestamp,
+      sourceMessageId,
+      image,
+    });
+  }
 }
 
 async function transcribeStoredConversationAudio(conversationId, messageId) {
@@ -920,6 +1152,110 @@ function startBulkTranscription(conversationId) {
   return job;
 }
 
+function getPendingImageStats(conversationId) {
+  const entries = readAllConversationEntries(conversationId)
+    .filter((entry) => entry.type === 'image' && entry.image?.analysisStatus !== 'completed');
+  const available = entries.filter((entry) => {
+    const filePath = getImageFilePath(entry.image?.fileName);
+    return Boolean(filePath && fs.existsSync(filePath) && entry.sourceMessageId);
+  });
+  return {
+    totalPending: entries.length,
+    available: available.length,
+    unavailable: entries.length - available.length,
+    entries: available,
+  };
+}
+
+function markImageAnalysisFailure(conversationId, messageId, error) {
+  const detail = String(error?.message || 'Falha desconhecida').replace(/\s+/g, ' ').slice(0, 180);
+  try {
+    updateImageEntry(conversationId, messageId, (current) => ({
+      ...current,
+      text: '[Imagem recebida — não foi possível analisar no lote.]',
+      image: {
+        ...current.image,
+        analysisStatus: 'failed',
+        lastAnalysisError: detail,
+        lastAnalysisAttemptAt: new Date().toISOString(),
+      },
+    }));
+  } catch (updateError) {
+    console.warn(`Não foi possível registrar a falha de análise da imagem: ${updateError.message}`);
+  }
+}
+
+async function analyzeImageWithRetry(conversationId, messageId) {
+  let lastError;
+  for (let attempt = 1; attempt <= BULK_TRANSCRIPTION_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await analyzeStoredConversationImage(conversationId, messageId);
+    } catch (error) {
+      lastError = error;
+      if (!canRetryTranscription(error) || attempt === BULK_TRANSCRIPTION_MAX_ATTEMPTS) break;
+      await waitFor(2000 * attempt);
+    }
+  }
+  markImageAnalysisFailure(conversationId, messageId, lastError);
+  throw lastError;
+}
+
+function retainImageJobForInspection(job) {
+  const timer = setTimeout(() => bulkImageJobs.delete(job.id), 10 * 60 * 1000);
+  timer.unref?.();
+}
+
+function startBulkImageAnalysis(conversationId) {
+  const activeJobId = activeBulkImageJobByConversation.get(conversationId);
+  const activeJob = activeJobId && bulkImageJobs.get(activeJobId);
+  if (activeJob?.status === 'running') return activeJob;
+
+  const stats = getPendingImageStats(conversationId);
+  const job = {
+    id: crypto.randomUUID(),
+    conversationId,
+    status: 'running',
+    total: stats.available,
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    current: null,
+    startedAt: new Date().toISOString(),
+  };
+  bulkImageJobs.set(job.id, job);
+  activeBulkImageJobByConversation.set(conversationId, job.id);
+
+  void (async () => {
+    for (const entry of stats.entries) {
+      job.current = entry.sourceMessageId;
+      try {
+        await analyzeImageWithRetry(conversationId, entry.sourceMessageId);
+        job.succeeded += 1;
+      } catch (error) {
+        job.failed += 1;
+        console.warn(`Não foi possível analisar uma imagem em lote: ${error.message}`);
+      }
+      job.processed += 1;
+      if (job.processed < job.total) await waitFor(BULK_TRANSCRIPTION_DELAY_MS);
+    }
+    job.status = job.failed ? 'completed_with_errors' : 'completed';
+    job.current = null;
+    job.finishedAt = new Date().toISOString();
+    activeBulkImageJobByConversation.delete(conversationId);
+    retainImageJobForInspection(job);
+  })().catch((error) => {
+    job.status = 'failed';
+    job.current = null;
+    job.finishedAt = new Date().toISOString();
+    job.failed = Math.max(1, job.failed);
+    activeBulkImageJobByConversation.delete(conversationId);
+    console.error(`Falha no lote de imagens: ${error.message}`);
+    retainImageJobForInspection(job);
+  });
+
+  return job;
+}
+
 function setConnectionStatus(status, changes = {}) {
   Object.assign(connection, { status, ...changes });
 }
@@ -1009,7 +1345,7 @@ async function connectWhatsApp() {
           error: null,
           reconnectAttempt: 0,
         });
-        console.log('WhatsApp conectado. Mensagens novas serão armazenadas e áudios ficarão disponíveis para transcrição manual.');
+        console.log('WhatsApp conectado. Mensagens, áudios e imagens novas serão armazenados localmente para análise sob demanda.');
         return;
       }
 
@@ -1240,6 +1576,55 @@ app.get('/api/transcription-jobs/:jobId', (req, res) => {
   return res.json({ job: publicBulkJob(job) });
 });
 
+app.get('/api/conversations/:id/image/pending', (req, res, next) => {
+  try {
+    const index = loadConversationIndex();
+    if (!index.conversations[req.params.id]) return res.status(404).json({ error: 'Conversa não encontrada.' });
+    const stats = getPendingImageStats(req.params.id);
+    return res.json({ totalPending: stats.totalPending, available: stats.available, unavailable: stats.unavailable });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/conversations/:id/image/analyze-all', (req, res, next) => {
+  try {
+    const index = loadConversationIndex();
+    if (!index.conversations[req.params.id]) return res.status(404).json({ error: 'Conversa não encontrada.' });
+    const job = startBulkImageAnalysis(req.params.id);
+    return res.status(202).json({ job: publicBulkJob(job) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/image-analysis-jobs/:jobId', (req, res) => {
+  const job = bulkImageJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Lote de análise de imagens não encontrado ou expirado.' });
+  return res.json({ job: publicBulkJob(job) });
+});
+
+app.get('/api/conversations/:id/image/:messageId', (req, res, next) => {
+  try {
+    const entry = getImageEntry(req.params.id, req.params.messageId);
+    const filePath = getImageFilePath(entry.image?.fileName);
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'O arquivo local desta imagem não está disponível.' });
+    }
+    const stat = fs.statSync(filePath);
+    res.set({
+      'Content-Type': entry.image?.mimeType || 'image/jpeg',
+      'Content-Length': stat.size,
+      'Cache-Control': 'private, max-age=3600',
+    });
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', next);
+    return stream.pipe(res);
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.get('/api/conversations/:id/audio/:messageId', (req, res, next) => {
   try {
     const entry = getAudioEntry(req.params.id, req.params.messageId);
@@ -1319,6 +1704,6 @@ process.on('SIGTERM', () => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Painel disponível em http://localhost:${PORT}`);
-  if (!GROQ_API_KEY) console.warn('GROQ_API_KEY ausente: os resumos e as transcrições ficarão indisponíveis até configurar o .env.');
+  if (!GROQ_API_KEY) console.warn('GROQ_API_KEY ausente: resumos, transcrições e análise de imagens ficarão indisponíveis até configurar o .env.');
   connectWhatsApp().catch((error) => console.error(`Falha ao iniciar WhatsApp: ${error.message}`));
 });
