@@ -405,14 +405,53 @@ async function storeAudioForManualTranscription(message, audioContent, conversat
   return { mimeType, fileName, bytes: buffer.length, transcriptionStatus: 'pending' };
 }
 
+async function hydrateStoredAudioIfNeeded(message, content, jid, sourceMessageId) {
+  const audioContent = getAudioContent(content);
+  if (!audioContent || !sourceMessageId) return;
+
+  const conversationId = getConversationId(jid);
+  let existing;
+  try {
+    existing = getAudioEntry(conversationId, sourceMessageId);
+  } catch {
+    return;
+  }
+  if (existing.audio?.fileName) return;
+
+  try {
+    const storedAudio = await storeAudioForManualTranscription(message, audioContent, conversationId);
+    const wasTranscribed = existing.audio?.transcriptionStatus === 'completed';
+    const pendingText = storedAudio.transcriptionStatus === 'pending'
+      ? '[Áudio recebido — escolha “Transcrever este áudio” se quiser enviar para a IA.]'
+      : '[Áudio recebido — o arquivo não está disponível para transcrição manual.]';
+    updateConversationEntry(conversationId, sourceMessageId, (current) => ({
+      ...current,
+      text: wasTranscribed ? current.text : pendingText,
+      audio: {
+        ...current.audio,
+        ...storedAudio,
+        seconds: current.audio?.seconds || Number(audioContent.seconds) || null,
+        transcriptionStatus: wasTranscribed ? 'completed' : storedAudio.transcriptionStatus,
+      },
+    }));
+  } catch (error) {
+    console.error(`Não foi possível recuperar um áudio histórico: ${error.message}`);
+  }
+}
+
 async function processWhatsAppMessage(message) {
   const jid = message.key?.remoteJid;
   const sourceMessageId = message.key?.id;
   if (!jid || jid === 'status@broadcast' || jid.endsWith('@broadcast')) return;
-  if (hasProcessedMessage(sourceMessageId)) return;
 
   const content = extractMessageContent(message.message);
   if (!content) return;
+  if (hasProcessedMessage(sourceMessageId)) {
+    // Caso o histórico seja sincronizado novamente, completa áudios antigos que foram
+    // registrados antes de existir o modo manual, sem duplicar os textos.
+    await hydrateStoredAudioIfNeeded(message, content, jid, sourceMessageId);
+    return;
+  }
 
   // Eventos de histórico podem chegar em mais de um lote. Marca antes de processar
   // para que o mesmo áudio/texto não seja salvo mais de uma vez.
