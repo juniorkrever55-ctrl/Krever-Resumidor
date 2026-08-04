@@ -4,7 +4,7 @@ Painel local para conectar uma conta do WhatsApp, registrar **mensagens novas**,
 
 ## Antes de iniciar
 
-- Node.js 18 ou superior (testado com Node 22).
+- Node.js 20 ou superior (testado com Node 22).
 - Uma chave da **Groq**. Veja [GROQ_INSTRUCOES.md](GROQ_INSTRUCOES.md).
 - Use uma conta autorizada e trate conversas, CPF e demais dados pessoais de acordo com a LGPD.
 

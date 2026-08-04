@@ -32,6 +32,7 @@ const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || 'llama-3.1-8b-instant';
 const GROQ_TRANSCRIPTION_MODEL = process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3-turbo';
 // Para transcrever sob demanda, o áudio precisa ficar salvo somente neste computador.
 const STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION = process.env.STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION !== 'false';
+const WHATSAPP_LOG_LEVEL = process.env.DEBUG_WHATSAPP === 'true' ? 'info' : 'silent';
 // O histórico é importado localmente; não chama IA.
 const IMPORT_HISTORY = process.env.IMPORT_HISTORY !== 'false';
 const MAX_TRACKED_MESSAGE_IDS = Number(process.env.MAX_TRACKED_MESSAGE_IDS || 100000);
@@ -544,6 +545,12 @@ function getDisconnectCode(lastDisconnect) {
   return error?.output?.statusCode || error?.data?.statusCode || error?.statusCode;
 }
 
+function getDisconnectDetail(lastDisconnect) {
+  const error = lastDisconnect?.error;
+  const detail = error?.output?.payload?.message || error?.message;
+  return typeof detail === 'string' ? detail.replace(/\s+/g, ' ').slice(0, 180) : '';
+}
+
 function scheduleReconnect() {
   clearTimeout(reconnectTimer);
   const delay = Math.min(30000, 2000 * Math.max(1, connection.reconnectAttempt));
@@ -572,13 +579,17 @@ async function connectWhatsApp() {
     const socket = makeWASocket({
       auth: state,
       ...(version ? { version } : {}),
-      // A identificação Desktop permite ao WhatsApp entregar o histórico disponível no pareamento.
-      browser: Browsers.macOS('Desktop'),
-      // O painel já expõe o estado da conexão; evita despejar detalhes de socket no terminal.
-      logger: pino({ level: 'silent' }),
+      // Perfil Chrome/Windows é o mais compatível para iniciar um pareamento novo por QR.
+      // A solicitação de histórico continua definida pelas opções seguintes.
+      browser: Browsers.windows('Chrome'),
+      // Use DEBUG_WHATSAPP=true no .env apenas para diagnosticar uma falha de conexão.
+      logger: pino({ level: WHATSAPP_LOG_LEVEL }),
       markOnlineOnConnect: false,
       syncFullHistory: IMPORT_HISTORY,
       shouldSyncHistoryMessage: () => IMPORT_HISTORY,
+      connectTimeoutMs: 60000,
+      qrTimeout: 60000,
+      retryRequestDelayMs: 1000,
       generateHighQualityLinkPreview: false,
     });
     activeSocket = socket;
@@ -627,9 +638,10 @@ async function connectWhatsApp() {
         }
 
         const reconnectAttempt = connection.reconnectAttempt + 1;
+        const detail = getDisconnectDetail(update.lastDisconnect);
         setConnectionStatus('reconnecting', {
           qrImage: null,
-          error: `Conexão interrompida${code ? ` (código ${code})` : ''}. Tentando novamente…`,
+          error: `Conexão interrompida${code ? ` (código ${code})` : ''}${detail ? `: ${detail}` : ''}. Tentando novamente…`,
           reconnectAttempt,
         });
         scheduleReconnect();
