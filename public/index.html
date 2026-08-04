@@ -56,6 +56,11 @@
     .message-meta { margin-bottom:5px; color:#8fa5c1; font-size:.7rem; }
     .message-audio { color:var(--cyan); font-size:.72rem; font-weight:750; text-transform:uppercase; letter-spacing:.05em; }
     .message-text { white-space:pre-wrap; overflow-wrap:anywhere; font-size:.88rem; line-height:1.48; }
+    .audio-tools { display:flex; flex-wrap:wrap; align-items:center; gap:9px; margin:8px 0; }
+    .audio-player { width:min(100%,330px); height:36px; }
+    .audio-action { min-height:32px; padding:6px 10px; color:#07111f; border-radius:8px; background:var(--cyan); font-size:.76rem; font-weight:800; }
+    .audio-action:disabled { opacity:.55; cursor:wait; }
+    .audio-note { color:var(--muted); font-size:.75rem; line-height:1.35; }
     .summary-area { padding:18px 19px 20px; border-top:1px solid var(--line); }
     label { display:block; margin-bottom:7px; color:#b9c9df; font-size:.78rem; font-weight:750; }
     textarea { display:block; width:100%; min-height:88px; resize:vertical; padding:10px 12px; color:var(--text); border:1px solid #304866; border-radius:10px; background:#091525; line-height:1.45; font-size:.84rem; }
@@ -136,7 +141,7 @@ Se a conversa for pessoal ou não tiver dados de venda de consórcio, responda a
   </div>
 
   <script>
-    const state = { selectedConversationId: null, instructions: document.getElementById('instructions').value };
+    const state = { selectedConversationId: null, instructions: document.getElementById('instructions').value, entries: [] };
     const elements = {
       headerDot: document.getElementById('header-dot'), headerStatus: document.getElementById('header-status'),
       connectionDot: document.getElementById('connection-dot'), connectionText: document.getElementById('connection-text'),
@@ -223,14 +228,59 @@ Se a conversa for pessoal ou não tiver dados de venda de consórcio, responda a
       } catch (error) { elements.conversationList.textContent = `Erro: ${error.message}`; }
     }
 
+    function audioStatusLabel(status) {
+      const labels = {
+        pending: 'Áudio salvo — aguardando sua decisão',
+        completed: 'Áudio transcrito',
+        empty: 'Transcrição vazia — você pode tentar novamente',
+        not_stored: 'Arquivo de áudio não foi salvo localmente',
+        download_failed: 'Não foi possível baixar este áudio',
+      };
+      return labels[status] || 'Áudio';
+    }
+
+    async function transcribeAudioEntry(entry, button) {
+      if (!state.selectedConversationId || !entry.sourceMessageId) return;
+      if (!confirm('Transcrever este áudio vai enviar somente este arquivo para a Groq e consumir créditos. Deseja continuar?')) return;
+      setButtonLoading(button, true, 'Transcrevendo…');
+      try {
+        const result = await request(`/api/conversations/${encodeURIComponent(state.selectedConversationId)}/audio/${encodeURIComponent(entry.sourceMessageId)}/transcribe`, { method: 'POST', body: '{}' });
+        Object.assign(entry, result.entry);
+        renderEntries(state.entries);
+        loadConversations();
+      } catch (error) {
+        alert(`Não foi possível transcrever: ${error.message}`);
+      } finally {
+        if (document.body.contains(button)) setButtonLoading(button, false);
+      }
+    }
+
     function renderEntries(entries) {
+      state.entries = entries;
       elements.entries.replaceChildren();
       if (!entries.length) { const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = 'Nenhuma mensagem registrada nesta conversa.'; elements.entries.append(empty); return; }
       entries.forEach((entry) => {
         const message = document.createElement('article'); message.className = `message${entry.fromMe ? ' own' : ''}`;
         const meta = document.createElement('div'); meta.className = 'message-meta'; meta.textContent = `${entry.fromMe ? 'Você' : entry.sender || 'Contato'} · ${formatDate(entry.timestamp)}`;
         message.append(meta);
-        if (entry.type === 'audio') { const audio = document.createElement('div'); audio.className = 'message-audio'; audio.textContent = 'Áudio transcrito'; message.append(audio); }
+
+        if (entry.type === 'audio') {
+          const audioLabel = document.createElement('div'); audioLabel.className = 'message-audio'; audioLabel.textContent = audioStatusLabel(entry.audio?.transcriptionStatus); message.append(audioLabel);
+          const tools = document.createElement('div'); tools.className = 'audio-tools';
+          if (entry.audio?.fileName && entry.sourceMessageId) {
+            const player = document.createElement('audio'); player.className = 'audio-player'; player.controls = true; player.preload = 'metadata';
+            player.src = `/api/conversations/${encodeURIComponent(state.selectedConversationId)}/audio/${encodeURIComponent(entry.sourceMessageId)}`;
+            tools.append(player);
+            if (entry.audio?.transcriptionStatus !== 'completed') {
+              const action = document.createElement('button'); action.type = 'button'; action.className = 'audio-action'; action.textContent = 'Transcrever este áudio';
+              action.addEventListener('click', () => transcribeAudioEntry(entry, action)); tools.append(action);
+            }
+          } else {
+            const note = document.createElement('span'); note.className = 'audio-note'; note.textContent = 'Este arquivo não está disponível localmente para reprodução ou transcrição.'; tools.append(note);
+          }
+          message.append(tools);
+        }
+
         const text = document.createElement('div'); text.className = 'message-text'; text.textContent = entry.text; message.append(text); elements.entries.append(message);
       });
       elements.entries.scrollTop = elements.entries.scrollHeight;

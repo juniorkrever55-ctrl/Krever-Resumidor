@@ -30,10 +30,10 @@ const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || 'llama-3.1-8b-instant';
 const GROQ_TRANSCRIPTION_MODEL = process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3-turbo';
-const SAVE_AUDIO_FILES = process.env.SAVE_AUDIO_FILES === 'true';
-// O histórico é importado localmente; não chama IA. Áudios antigos ficam desativados por padrão.
+// Para transcrever sob demanda, o áudio precisa ficar salvo somente neste computador.
+const STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION = process.env.STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION !== 'false';
+// O histórico é importado localmente; não chama IA.
 const IMPORT_HISTORY = process.env.IMPORT_HISTORY !== 'false';
-const TRANSCRIBE_HISTORY_AUDIO = process.env.TRANSCRIBE_HISTORY_AUDIO === 'true';
 const MAX_TRACKED_MESSAGE_IDS = Number(process.env.MAX_TRACKED_MESSAGE_IDS || 100000);
 const MAX_AUDIO_BYTES = Number(process.env.MAX_AUDIO_BYTES || 24 * 1024 * 1024);
 const MAX_SUMMARY_CHARS = Number(process.env.MAX_SUMMARY_CHARS || 50000);
@@ -66,13 +66,14 @@ let conversationIndexWriteTimer = null;
 let processedMessageIds = null;
 let processedMessageIdsDirty = false;
 let processedMessageIdsWriteTimer = null;
+const pendingTranscriptions = new Map();
 
 ensureDirectories();
 
 function ensureDirectories() {
   fs.mkdirSync(AUTH_DIR, { recursive: true });
   fs.mkdirSync(CONVERSATIONS_DIR, { recursive: true });
-  if (SAVE_AUDIO_FILES) fs.mkdirSync(AUDIO_DIR, { recursive: true });
+  if (STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION) fs.mkdirSync(AUDIO_DIR, { recursive: true });
 }
 
 function readJson(file, fallback) {
@@ -210,11 +211,11 @@ function appendConversationEntry({ jid, pushName, fromMe, sender, type, text, ti
   return entry;
 }
 
-function loadConversationEntries(id, limit = 250) {
+function readAllConversationEntries(id) {
   const file = getConversationFile(id);
   if (!file || !fs.existsSync(file)) return [];
 
-  const entries = fs.readFileSync(file, 'utf8')
+  return fs.readFileSync(file, 'utf8')
     .split('\n')
     .filter(Boolean)
     .map((line) => {
@@ -225,8 +226,67 @@ function loadConversationEntries(id, limit = 250) {
       }
     })
     .filter(Boolean);
+}
 
+function loadConversationEntries(id, limit = 250) {
+  const entries = readAllConversationEntries(id);
   return entries.slice(-Math.max(1, Math.min(Number(limit) || 250, 1000)));
+}
+
+function writeConversationEntries(id, entries) {
+  const file = getConversationFile(id);
+  if (!file) {
+    const error = new Error('Identificador de conversa inválido.');
+    error.statusCode = 400;
+    throw error;
+  }
+  const temporaryFile = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryFile, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`, { mode: 0o600 });
+  fs.renameSync(temporaryFile, file);
+}
+
+function getAudioEntry(id, messageId) {
+  const entry = readAllConversationEntries(id)
+    .find((item) => item.type === 'audio' && item.sourceMessageId === messageId);
+  if (!entry) {
+    const error = new Error('Áudio não encontrado nesta conversa.');
+    error.statusCode = 404;
+    throw error;
+  }
+  return entry;
+}
+
+function updateConversationEntry(id, messageId, update) {
+  const entries = readAllConversationEntries(id);
+  const position = entries.findIndex((item) => item.type === 'audio' && item.sourceMessageId === messageId);
+  if (position === -1) {
+    const error = new Error('Áudio não encontrado nesta conversa.');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const before = entries[position];
+  const after = update({ ...before, audio: { ...(before.audio || {}) } });
+  entries[position] = after;
+  writeConversationEntries(id, entries);
+
+  const index = loadConversationIndex();
+  const conversation = index.conversations[id];
+  if (conversation && conversation.lastMessageAt === before.timestamp) {
+    conversation.preview = String(after.text || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+    queueConversationIndexWrite();
+  }
+  return after;
+}
+
+function safeAudioFileName(conversationId, messageId, mimeType) {
+  const safeMessageId = String(messageId || crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 160);
+  return `${conversationId}-${safeMessageId}.${extensionForMimeType(mimeType)}`;
+}
+
+function getAudioFilePath(fileName) {
+  if (typeof fileName !== 'string' || !/^[a-f0-9]{24}-[a-zA-Z0-9_-]+\.[a-z0-9]+$/i.test(fileName)) return null;
+  return path.join(AUDIO_DIR, fileName);
 }
 
 function getMessageTimestamp(message) {
@@ -295,26 +355,16 @@ async function callGroq(url, options) {
   return body;
 }
 
-async function transcribeAudio(message, audioContent, conversationId) {
+async function transcribeAudioBuffer(buffer, mimeType, fileName) {
   if (!GROQ_API_KEY) {
-    return { text: '[Áudio recebido — transcrição pendente: configure GROQ_API_KEY.]', transcriptionStatus: 'not_configured' };
+    const error = new Error('GROQ_API_KEY não configurada. Configure a chave antes de transcrever.');
+    error.statusCode = 503;
+    throw error;
   }
-
-  const buffer = await downloadMediaMessage(message, 'buffer', {});
   if (buffer.length > MAX_AUDIO_BYTES) {
-    return {
-      text: `[Áudio recebido — não transcrito: excede o limite configurado de ${Math.floor(MAX_AUDIO_BYTES / 1024 / 1024)} MB.]`,
-      transcriptionStatus: 'too_large',
-    };
-  }
-
-  const mimeType = audioContent.mimetype || 'audio/ogg';
-  const extension = extensionForMimeType(mimeType);
-  const fileName = `audio-${message.key.id || crypto.randomUUID()}.${extension}`;
-
-  if (SAVE_AUDIO_FILES) {
-    fs.mkdirSync(AUDIO_DIR, { recursive: true });
-    fs.writeFileSync(path.join(AUDIO_DIR, `${conversationId}-${fileName}`), buffer, { mode: 0o600 });
+    const error = new Error(`O áudio excede o limite configurado de ${Math.floor(MAX_AUDIO_BYTES / 1024 / 1024)} MB para transcrição.`);
+    error.statusCode = 413;
+    throw error;
   }
 
   const form = new FormData();
@@ -335,7 +385,27 @@ async function transcribeAudio(message, audioContent, conversationId) {
   };
 }
 
-async function processWhatsAppMessage(message, { isHistory = false } = {}) {
+async function storeAudioForManualTranscription(message, audioContent, conversationId) {
+  const mimeType = audioContent.mimetype || 'audio/ogg';
+  if (!STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION) {
+    return { mimeType, transcriptionStatus: 'not_stored' };
+  }
+
+  const fileName = safeAudioFileName(conversationId, message.key?.id, mimeType);
+  const filePath = getAudioFilePath(fileName);
+  if (!filePath) throw new Error('Não foi possível preparar o arquivo de áudio.');
+
+  if (fs.existsSync(filePath)) {
+    return { mimeType, fileName, bytes: fs.statSync(filePath).size, transcriptionStatus: 'pending' };
+  }
+
+  const buffer = await downloadMediaMessage(message, 'buffer', {});
+  fs.mkdirSync(AUDIO_DIR, { recursive: true });
+  fs.writeFileSync(filePath, buffer, { mode: 0o600 });
+  return { mimeType, fileName, bytes: buffer.length, transcriptionStatus: 'pending' };
+}
+
+async function processWhatsAppMessage(message) {
   const jid = message.key?.remoteJid;
   const sourceMessageId = message.key?.id;
   if (!jid || jid === 'status@broadcast' || jid.endsWith('@broadcast')) return;
@@ -345,7 +415,7 @@ async function processWhatsAppMessage(message, { isHistory = false } = {}) {
   if (!content) return;
 
   // Eventos de histórico podem chegar em mais de um lote. Marca antes de processar
-  // para que o mesmo áudio/texto não seja salvo ou enviado à Groq duas vezes.
+  // para que o mesmo áudio/texto não seja salvo mais de uma vez.
   markMessageAsProcessed(sourceMessageId);
 
   const fromMe = Boolean(message.key?.fromMe);
@@ -361,54 +431,68 @@ async function processWhatsAppMessage(message, { isHistory = false } = {}) {
   const audioContent = getAudioContent(content);
   if (!audioContent) return;
 
-  // Importar o histórico textual não consome créditos da Groq. Por padrão, um áudio
-  // antigo fica registrado sem chamar a IA; áudios novos continuam sendo transcritos.
-  if (isHistory && !TRANSCRIBE_HISTORY_AUDIO) {
-    appendConversationEntry({
-      jid,
-      pushName,
-      fromMe,
-      sender,
-      type: 'audio',
-      text: '[Áudio histórico — não transcrito para não consumir créditos da IA.]',
-      timestamp,
-      sourceMessageId,
-      audio: { mimeType: audioContent.mimetype || 'audio/ogg', transcriptionStatus: 'skipped_history' },
-    });
-    return;
+  const conversationId = getConversationId(jid);
+  let audio;
+  try {
+    // Guardar o arquivo é local e não chama a Groq. A transcrição só ocorre no botão do painel.
+    audio = await storeAudioForManualTranscription(message, audioContent, conversationId);
+  } catch (error) {
+    console.error(`Não foi possível salvar um áudio de ${getDisplayName(jid, pushName)}: ${error.message}`);
+    audio = { mimeType: audioContent.mimetype || 'audio/ogg', transcriptionStatus: 'download_failed' };
   }
 
-  const conversationId = getConversationId(jid);
-  try {
-    const transcription = await transcribeAudio(message, audioContent, conversationId);
-    appendConversationEntry({
-      jid,
-      pushName,
-      fromMe,
-      sender,
-      type: 'audio',
+  const pendingCopy = audio.transcriptionStatus === 'pending'
+    ? '[Áudio recebido — escolha “Transcrever este áudio” se quiser enviar para a IA.]'
+    : '[Áudio recebido — o arquivo não está disponível para transcrição manual.]';
+  appendConversationEntry({
+    jid,
+    pushName,
+    fromMe,
+    sender,
+    type: 'audio',
+    text: pendingCopy,
+    timestamp,
+    sourceMessageId,
+    audio: {
+      ...audio,
+      seconds: Number(audioContent.seconds) || null,
+    },
+  });
+}
+
+async function transcribeStoredConversationAudio(conversationId, messageId) {
+  const jobKey = `${conversationId}:${messageId}`;
+  if (pendingTranscriptions.has(jobKey)) return pendingTranscriptions.get(jobKey);
+
+  const job = (async () => {
+    const entry = getAudioEntry(conversationId, messageId);
+    if (entry.audio?.transcriptionStatus === 'completed') return entry;
+
+    const filePath = getAudioFilePath(entry.audio?.fileName);
+    if (!filePath || !fs.existsSync(filePath)) {
+      const error = new Error('O arquivo local deste áudio não está disponível. Apenas áudios recebidos depois de ativar a transcrição manual podem ser transcritos.');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const buffer = fs.readFileSync(filePath);
+    const transcription = await transcribeAudioBuffer(buffer, entry.audio?.mimeType || 'audio/ogg', entry.audio.fileName);
+    return updateConversationEntry(conversationId, messageId, (current) => ({
+      ...current,
       text: transcription.text,
-      timestamp,
-      sourceMessageId,
       audio: {
-        mimeType: audioContent.mimetype || 'audio/ogg',
-        seconds: Number(audioContent.seconds) || null,
+        ...current.audio,
         transcriptionStatus: transcription.transcriptionStatus,
+        transcribedAt: new Date().toISOString(),
       },
-    });
-  } catch (error) {
-    console.error(`Não foi possível transcrever um áudio de ${getDisplayName(jid, pushName)}: ${error.message}`);
-    appendConversationEntry({
-      jid,
-      pushName,
-      fromMe,
-      sender,
-      type: 'audio',
-      text: '[Áudio recebido — não foi possível transcrever agora. Verifique GROQ_API_KEY, o modelo e o limite da conta.]',
-      timestamp,
-      sourceMessageId,
-      audio: { mimeType: audioContent.mimetype || 'audio/ogg', transcriptionStatus: 'failed' },
-    });
+    }));
+  })();
+
+  pendingTranscriptions.set(jobKey, job);
+  try {
+    return await job;
+  } finally {
+    pendingTranscriptions.delete(jobKey);
   }
 }
 
@@ -517,7 +601,7 @@ async function connectWhatsApp() {
       const isHistory = type === 'append';
       if (isHistory && !IMPORT_HISTORY) return;
       for (const message of messages) {
-        processWhatsAppMessage(message, { isHistory }).catch((error) => {
+        processWhatsAppMessage(message).catch((error) => {
           console.error(`Erro ao processar mensagem do WhatsApp: ${error.message}`);
         });
       }
@@ -527,7 +611,7 @@ async function connectWhatsApp() {
       if (!IMPORT_HISTORY) return;
       console.log(`Recebido lote de histórico: ${messages.length} mensagem(ns). Importando somente localmente…`);
       for (const message of messages) {
-        processWhatsAppMessage(message, { isHistory: true }).catch((error) => {
+        processWhatsAppMessage(message).catch((error) => {
           console.error(`Erro ao importar mensagem do histórico: ${error.message}`);
         });
       }
@@ -649,6 +733,37 @@ app.get('/api/conversations/:id', (req, res) => {
   const conversation = index.conversations[id];
   if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
   return res.json({ conversation: toPublicConversation(conversation), entries: loadConversationEntries(id, req.query.limit) });
+});
+
+app.get('/api/conversations/:id/audio/:messageId', (req, res, next) => {
+  try {
+    const entry = getAudioEntry(req.params.id, req.params.messageId);
+    const filePath = getAudioFilePath(entry.audio?.fileName);
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'O arquivo local deste áudio não está disponível.' });
+    }
+
+    const stat = fs.statSync(filePath);
+    res.set({
+      'Content-Type': entry.audio?.mimeType || 'audio/ogg',
+      'Content-Length': stat.size,
+      'Cache-Control': 'private, max-age=3600',
+    });
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', next);
+    return stream.pipe(res);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/conversations/:id/audio/:messageId/transcribe', async (req, res, next) => {
+  try {
+    const entry = await transcribeStoredConversationAudio(req.params.id, req.params.messageId);
+    return res.json({ entry });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 app.post('/api/summarize', async (req, res, next) => {

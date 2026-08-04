@@ -35,14 +35,16 @@ O QR não é enviado ao navegador como texto: o servidor transforma o token em i
 Com `IMPORT_HISTORY=true` (padrão), no primeiro pareamento o app importa e salva localmente as mensagens históricas que o WhatsApp Web disponibilizar. **Essa importação de texto não chama a Groq e não consome créditos de IA.** O WhatsApp decide quanto do histórico entrega ao dispositivo conectado; portanto não há garantia técnica de receber absolutamente toda a vida da conta.
 
 - **Texto histórico:** é apenas gravado em `data/`; não vai para a IA automaticamente.
-- **Áudio novo:** é transcrito pela Groq assim que chega, portanto consome uma requisição de transcrição.
-- **Áudio histórico:** fica sem transcrição por padrão para evitar custo. Mude `TRANSCRIBE_HISTORY_AUDIO=true` no `.env` apenas se quiser tentar transcrevê-los; isso pode consumir muitos créditos e mídias antigas podem não estar mais disponíveis.
+- **Qualquer áudio recebido:** é guardado localmente em `data/audio/` para aparecer com player no painel. Isso não chama a Groq. Na conversa, clique em **Transcrever este áudio** somente nos áudios que desejar enviar à IA.
+- **Transcrição:** cada clique em **Transcrever este áudio** faz uma chamada à Groq e consome uma requisição. Áudios antigos que o WhatsApp não disponibilizar mais podem não ser baixados.
 - **Resumo:** só chama a Groq quando você clica em **Gerar resumo da conversa**. Para controlar custo e contexto, cada resumo usa as últimas 1.000 mensagens registradas e no máximo 50.000 caracteres. Um novo clique faz uma nova chamada.
+
+Para o modo manual funcionar, `STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION=true` deve permanecer no `.env` (é o padrão). Se definir `false`, o sistema não guardará os áudios, nem poderá reproduzi-los ou transcrevê-los depois.
 
 ## O que é salvo
 
 - Conversas, histórico importado e transcrições são salvos localmente em `data/`, que está ignorada pelo Git.
-- Áudios são transcritos pela Groq. Por padrão os arquivos de áudio originais não ficam em disco (`SAVE_AUDIO_FILES=false`).
+- Os áudios recebidos ficam em `data/audio/` somente para reprodução e transcrição manual. Essa pasta também é ignorada pelo Git.
 - As credenciais da sessão ficam em `auth/`, também ignorada pelo Git.
 
 ## APIs locais

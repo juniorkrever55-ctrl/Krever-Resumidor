@@ -21,9 +21,9 @@ A chave não deve ficar em `index.js`, no HTML, em commits ou ser enviada pelo n
 - **Resumo:** `llama-3.1-8b-instant` (configurável com `GROQ_CHAT_MODEL`)
 - **Áudio:** `whisper-large-v3-turbo` (configurável com `GROQ_TRANSCRIPTION_MODEL`)
 
-O áudio novo é baixado do WhatsApp no servidor, enviado à rota de transcrição da Groq e a transcrição passa a fazer parte da conversa que será resumida. Por padrão o arquivo de áudio original **não é guardado**; só a transcrição é salva em `data/`. Para guardar os originais, use `SAVE_AUDIO_FILES=true` conscientemente.
+Os áudios recebidos são baixados e guardados localmente em `data/audio/` para você ouvir no painel. Eles **não são enviados à Groq automaticamente**. A Groq só é chamada quando você clica em **Transcrever este áudio** ou no botão de resumo; a transcrição escolhida passa a fazer parte da conversa que será resumida.
 
-A importação de textos de conversas anteriores é local: ela **não** chama a Groq. A Groq só é chamada quando um áudio é transcrito ou quando o botão de resumo é acionado. Áudios históricos são ignorados por padrão; `TRANSCRIBE_HISTORY_AUDIO=true` os habilita, com possível consumo elevado de créditos.
+A importação de textos de conversas anteriores também é local e **não** chama a Groq. Mantenha `STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION=true` no `.env` para que áudios novos e históricos disponíveis possam ser reproduzidos e transcritos sob demanda. Como os arquivos podem conter dados pessoais, `data/` permanece fora do Git.
 
 ## Segurança importante
 
