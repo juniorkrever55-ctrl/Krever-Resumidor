@@ -39,6 +39,8 @@ O painel usa os contatos e chats que o WhatsApp disponibiliza na sincronização
 
 Com `IMPORT_HISTORY=true` (padrão), no primeiro pareamento o app importa e salva localmente as mensagens históricas que o WhatsApp Web disponibilizar. **Essa importação de texto não chama a Groq e não consome créditos de IA.** O WhatsApp decide quanto do histórico entrega ao dispositivo conectado; portanto não há garantia técnica de receber absolutamente toda a vida da conta.
 
+Em uma conversa selecionada, o botão **Buscar 50 anteriores** pede ao WhatsApp mais uma página de até 50 mensagens antes da mensagem mais antiga já guardada. Pode ser usado novamente após alguns segundos. Essa busca não usa IA, mas o WhatsApp pode não retornar mensagens antigas se elas não estiverem disponíveis na conta/dispositivo.
+
 - **Texto histórico:** é apenas gravado em `data/`; não vai para a IA automaticamente.
 - **Qualquer áudio recebido:** é guardado localmente em `data/audio/` para aparecer com player no painel. Isso não chama a Groq. Na conversa, clique em **Transcrever este áudio** somente nos áudios que desejar enviar à IA.
 - **Transcrição:** cada clique em **Transcrever este áudio** faz uma chamada à Groq e consome uma requisição. Áudios antigos que o WhatsApp não disponibilizar mais podem não ser baixados.
@@ -63,6 +65,7 @@ Não existe uma API confiável para comparar toda a conta e descobrir retroativa
 - `GET /api/whatsapp/status` — estado da conexão e QR temporário.
 - `POST /api/whatsapp/reset` — remove a sessão local e reinicia o pareamento.
 - `GET /api/conversations` — conversas capturadas.
+- `POST /api/conversations/:id/history` — pede uma página de até 50 mensagens mais antigas ao WhatsApp.
 - `POST /api/conversations/:id/summarize` — resumo de uma conversa armazenada.
 - `POST /api/summarize` — resumo de texto avulso.
 

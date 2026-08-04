@@ -116,6 +116,7 @@
       <main class="card main">
         <div class="main-heading">
           <div><h2 id="conversation-title">Selecione uma conversa</h2><p id="conversation-info">As novas mensagens aparecem aqui depois da conexão.</p></div>
+          <button class="button secondary" type="button" id="older-history-button" disabled>Buscar 50 anteriores</button>
         </div>
         <div class="entries" id="entries"><p class="empty">Conecte o WhatsApp e escolha uma conversa para ver o histórico armazenado.</p></div>
         <section class="summary-area">
@@ -154,7 +155,7 @@ Se a conversa for pessoal ou não tiver dados de venda de consórcio, responda a
       qrImage: document.getElementById('qr-image'), qrPlaceholder: document.getElementById('qr-placeholder'),
       groqWarning: document.getElementById('groq-warning'), resetButton: document.getElementById('reset-button'), newAccountButton: document.getElementById('new-account-button'),
       conversationList: document.getElementById('conversation-list'), conversationSearch: document.getElementById('conversation-search'), conversationTitle: document.getElementById('conversation-title'),
-      conversationInfo: document.getElementById('conversation-info'), entries: document.getElementById('entries'),
+      conversationInfo: document.getElementById('conversation-info'), olderHistoryButton: document.getElementById('older-history-button'), entries: document.getElementById('entries'),
       summarizeButton: document.getElementById('summarize-button'), summaryHint: document.getElementById('summary-hint'),
       summaryOutput: document.getElementById('summary-output'), instructions: document.getElementById('instructions'),
       manualText: document.getElementById('manual-text'), manualOutput: document.getElementById('manual-output'), manualButton: document.getElementById('manual-button'),
@@ -304,17 +305,34 @@ Se a conversa for pessoal ou não tiver dados de venda de consórcio, responda a
       elements.entries.scrollTop = elements.entries.scrollHeight;
     }
 
-    async function loadConversation(id) {
+    async function loadConversation(id, preserveSummary = false) {
       try {
         const data = await request(`/api/conversations/${encodeURIComponent(id)}?limit=500`);
         state.selectedConversationId = id;
         elements.conversationTitle.textContent = data.conversation.name;
         elements.conversationInfo.textContent = `${data.conversation.messageCount} mensagem(ns) registrada(s) · ${data.conversation.isGroup ? 'grupo' : 'conversa individual'}`;
         elements.summarizeButton.disabled = false;
+        elements.olderHistoryButton.disabled = false;
         elements.summaryHint.textContent = 'A IA receberá as mensagens registradas desta conversa.';
-        elements.summaryOutput.textContent = 'O resumo aparecerá aqui.';
+        if (!preserveSummary) elements.summaryOutput.textContent = 'O resumo aparecerá aqui.';
         renderEntries(data.entries); loadConversations();
       } catch (error) { elements.summaryOutput.textContent = `Erro ao abrir conversa: ${error.message}`; }
+    }
+
+    async function requestOlderHistory() {
+      if (!state.selectedConversationId) return;
+      setButtonLoading(elements.olderHistoryButton, true, 'Buscando…');
+      const selectedId = state.selectedConversationId;
+      try {
+        const result = await request(`/api/conversations/${encodeURIComponent(selectedId)}/history`, { method: 'POST', body: '{}' });
+        elements.conversationInfo.textContent = result.message;
+        // A resposta do WhatsApp chega em lote assíncrono; atualiza sem apagar um resumo já exibido.
+        setTimeout(() => { if (state.selectedConversationId === selectedId) loadConversation(selectedId, true); }, 2200);
+      } catch (error) {
+        elements.conversationInfo.textContent = `Não foi possível buscar histórico: ${error.message}`;
+      } finally {
+        setButtonLoading(elements.olderHistoryButton, false);
+      }
     }
 
     async function summarizeConversation() {
@@ -353,6 +371,7 @@ Se a conversa for pessoal ou não tiver dados de venda de consórcio, responda a
           elements.conversationInfo.textContent = 'A nova conta começará a preencher conversas após a sincronização.';
           elements.entries.textContent = 'Histórico local apagado. Aguarde a sincronização da nova conta.';
           elements.summarizeButton.disabled = true;
+          elements.olderHistoryButton.disabled = true;
         }
         setTimeout(() => { refreshStatus(); loadConversations(); }, 800);
       } catch (error) { elements.connectionText.textContent = `Erro: ${error.message}`; }
@@ -364,6 +383,7 @@ Se a conversa for pessoal ou não tiver dados de venda de consórcio, responda a
     document.getElementById('refresh-button').addEventListener('click', refreshStatus);
     document.getElementById('reload-conversations').addEventListener('click', loadConversations);
     elements.summarizeButton.addEventListener('click', summarizeConversation);
+    elements.olderHistoryButton.addEventListener('click', requestOlderHistory);
     elements.manualButton.addEventListener('click', summarizeManual);
     elements.conversationSearch.addEventListener('input', () => renderConversations());
 

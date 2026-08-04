@@ -39,6 +39,7 @@ const IMPORT_HISTORY = process.env.IMPORT_HISTORY !== 'false';
 const MAX_TRACKED_MESSAGE_IDS = Number(process.env.MAX_TRACKED_MESSAGE_IDS || 100000);
 const MAX_AUDIO_BYTES = Number(process.env.MAX_AUDIO_BYTES || 24 * 1024 * 1024);
 const MAX_SUMMARY_CHARS = Number(process.env.MAX_SUMMARY_CHARS || 50000);
+const ON_DEMAND_HISTORY_PAGE_SIZE = 50;
 
 const DEFAULT_SUMMARY_INSTRUCTIONS = `Você é um assistente de vendas de consórcio. Resuma a conversa de forma objetiva em português do Brasil. Só considere que é uma oportunidade de consórcio quando houver sinais claros disso. Nunca invente dados. Use exatamente esta estrutura:
 
@@ -71,6 +72,7 @@ let processedMessageIdsWriteTimer = null;
 let contactsCache = null;
 let contactsWriteTimer = null;
 const pendingTranscriptions = new Map();
+const onDemandHistoryRequestAt = new Map();
 
 ensureDirectories();
 
@@ -299,6 +301,9 @@ function appendConversationEntry({ jid, pushName, fromMe, sender, type, text, ti
   const preview = entry.text.replace(/\s+/g, ' ').trim().slice(0, 140);
   const knownName = knownNameFor(jid, jid.endsWith('@g.us') ? undefined : pushName);
   const phone = knownContactFor(jid)?.phone || phoneFromJid(jid) || existing?.phone || '';
+  const existingTimestamp = Date.parse(existing?.lastMessageAt || '');
+  const entryTimestamp = Date.parse(entry.timestamp);
+  const isNewest = !existing || !Number.isFinite(existingTimestamp) || (Number.isFinite(entryTimestamp) && entryTimestamp >= existingTimestamp);
   index.conversations[id] = {
     id,
     jid,
@@ -306,8 +311,8 @@ function appendConversationEntry({ jid, pushName, fromMe, sender, type, text, ti
     phone,
     isGroup: jid.endsWith('@g.us'),
     messageCount: (existing?.messageCount || 0) + 1,
-    lastMessageAt: entry.timestamp,
-    preview,
+    lastMessageAt: isNewest ? entry.timestamp : existing.lastMessageAt,
+    preview: isNewest ? preview : existing.preview,
   };
 
   queueConversationIndexWrite();
@@ -329,7 +334,12 @@ function readAllConversationEntries(id) {
         return null;
       }
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .sort((a, b) => {
+      const timestampA = Date.parse(a.timestamp || '') || 0;
+      const timestampB = Date.parse(b.timestamp || '') || 0;
+      return timestampA - timestampB || String(a.id || '').localeCompare(String(b.id || ''));
+    });
 }
 
 function loadConversationEntries(id, limit = 250) {
@@ -445,6 +455,53 @@ function removeMessagesFromWhatsAppEvent(keys) {
     removed += removeConversationEntries(getConversationId(jid), messageIds);
   }
   if (removed) console.log(`Sincronização: ${removed} mensagem(ns) apagada(s) também foram removidas do histórico local.`);
+}
+
+async function requestOlderConversationHistory(conversationId) {
+  const index = loadConversationIndex();
+  const conversation = index.conversations[conversationId];
+  if (!conversation) {
+    const error = new Error('Conversa não encontrada.');
+    error.statusCode = 404;
+    throw error;
+  }
+  if (!activeSocket || connection.status !== 'connected') {
+    const error = new Error('Conecte o WhatsApp antes de buscar mensagens antigas.');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const lastRequestAt = onDemandHistoryRequestAt.get(conversationId) || 0;
+  if (Date.now() - lastRequestAt < 4000) {
+    const error = new Error('Aguarde alguns segundos antes de pedir outra página de histórico.');
+    error.statusCode = 429;
+    throw error;
+  }
+
+  const oldest = readAllConversationEntries(conversationId)
+    .filter((entry) => entry.sourceMessageId && entry.timestamp)
+    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))[0];
+  if (!oldest) {
+    const error = new Error('Não há uma mensagem-base nesta conversa para buscar um histórico anterior.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const oldestTimestamp = Math.floor(new Date(oldest.timestamp).getTime() / 1000);
+  if (!Number.isFinite(oldestTimestamp)) {
+    const error = new Error('A mensagem-base desta conversa não possui uma data válida.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  onDemandHistoryRequestAt.set(conversationId, Date.now());
+  await activeSocket.fetchMessageHistory(ON_DEMAND_HISTORY_PAGE_SIZE, {
+    remoteJid: conversation.jid,
+    id: oldest.sourceMessageId,
+    fromMe: Boolean(oldest.fromMe),
+  }, oldestTimestamp);
+
+  return { requested: ON_DEMAND_HISTORY_PAGE_SIZE, oldestTimestamp: oldest.timestamp };
 }
 
 function safeAudioFileName(conversationId, messageId, mimeType) {
@@ -982,6 +1039,18 @@ app.get('/api/conversations/:id', (req, res) => {
   const conversation = index.conversations[id];
   if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
   return res.json({ conversation: toPublicConversation(conversation), entries: loadConversationEntries(id, req.query.limit) });
+});
+
+app.post('/api/conversations/:id/history', async (req, res, next) => {
+  try {
+    const result = await requestOlderConversationHistory(req.params.id);
+    return res.status(202).json({
+      ok: true,
+      message: `Solicitação enviada. O WhatsApp pode retornar até ${result.requested} mensagens mais antigas se elas ainda estiverem disponíveis.`,
+    });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 app.get('/api/conversations/:id/audio/:messageId', (req, res, next) => {
