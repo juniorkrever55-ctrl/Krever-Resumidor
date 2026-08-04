@@ -32,6 +32,8 @@
     .button { display:inline-flex; justify-content:center; align-items:center; min-height:40px; padding:9px 14px; border-radius:10px; font-weight:750; font-size:.86rem; color:#06111f; background:linear-gradient(135deg,var(--cyan),#76a9ff); }
     .button:hover { filter:brightness(1.06); transform:translateY(-1px); }
     .button.secondary { color:var(--text); background:transparent; border:1px solid var(--line); }
+    .button.danger { color:#fff; background:#a9364a; }
+    .button.danger:hover { background:#c6455c; }
     .button:disabled { opacity:.54; cursor:wait; transform:none; }
     .qr-area { width:176px; min-height:176px; border:1px dashed #3a577b; border-radius:14px; display:grid; place-items:center; overflow:hidden; background:#0a1627; }
     .qr-area img { display:block; width:100%; height:100%; object-fit:cover; background:#fff; padding:7px; }
@@ -94,6 +96,7 @@
         <p class="warning hidden" id="groq-warning">A chave da Groq ainda não foi configurada. O WhatsApp pode conectar, mas resumos e transcrição de áudio só funcionarão depois de criar o arquivo <strong>.env</strong>.</p>
         <div class="connection-actions">
           <button class="button secondary" type="button" id="reset-button">Refazer conexão / novo QR</button>
+          <button class="button danger" type="button" id="new-account-button">Trocar conta e apagar histórico</button>
           <button class="button secondary" type="button" id="refresh-button">Atualizar</button>
         </div>
       </div>
@@ -149,7 +152,7 @@ Se a conversa for pessoal ou não tiver dados de venda de consórcio, responda a
       headerDot: document.getElementById('header-dot'), headerStatus: document.getElementById('header-status'),
       connectionDot: document.getElementById('connection-dot'), connectionText: document.getElementById('connection-text'),
       qrImage: document.getElementById('qr-image'), qrPlaceholder: document.getElementById('qr-placeholder'),
-      groqWarning: document.getElementById('groq-warning'), resetButton: document.getElementById('reset-button'),
+      groqWarning: document.getElementById('groq-warning'), resetButton: document.getElementById('reset-button'), newAccountButton: document.getElementById('new-account-button'),
       conversationList: document.getElementById('conversation-list'), conversationSearch: document.getElementById('conversation-search'), conversationTitle: document.getElementById('conversation-title'),
       conversationInfo: document.getElementById('conversation-info'), entries: document.getElementById('entries'),
       summarizeButton: document.getElementById('summarize-button'), summaryHint: document.getElementById('summary-hint'),
@@ -333,13 +336,31 @@ Se a conversa for pessoal ou não tiver dados de venda de consórcio, responda a
       finally { setButtonLoading(elements.manualButton, false); }
     }
 
-    elements.resetButton.addEventListener('click', async () => {
-      if (!confirm('Isso remove a sessão local atual e pede um novo QR. Deseja continuar?')) return;
-      setButtonLoading(elements.resetButton, true, 'Preparando QR…');
-      try { const result = await request('/api/whatsapp/reset', { method: 'POST', body: '{}' }); elements.connectionText.textContent = result.message; setTimeout(refreshStatus, 800); }
-      catch (error) { elements.connectionText.textContent = `Erro: ${error.message}`; }
-      finally { setButtonLoading(elements.resetButton, false); }
-    });
+    async function resetWhatsApp(clearData) {
+      const button = clearData ? elements.newAccountButton : elements.resetButton;
+      const prompt = clearData
+        ? 'Isso remove a sessão atual E apaga definitivamente conversas, contatos, áudios e resumos salvos neste computador. Use apenas para conectar outra conta. Deseja continuar?'
+        : 'Isso remove somente a sessão local atual e pede um novo QR. Conversas e áudios já salvos serão preservados. Deseja continuar?';
+      if (!confirm(prompt)) return;
+      setButtonLoading(button, true, 'Preparando QR…');
+      try {
+        const result = await request('/api/whatsapp/reset', { method: 'POST', body: JSON.stringify({ clearData }) });
+        elements.connectionText.textContent = result.message;
+        if (clearData) {
+          state.selectedConversationId = null;
+          state.entries = [];
+          elements.conversationTitle.textContent = 'Selecione uma conversa';
+          elements.conversationInfo.textContent = 'A nova conta começará a preencher conversas após a sincronização.';
+          elements.entries.textContent = 'Histórico local apagado. Aguarde a sincronização da nova conta.';
+          elements.summarizeButton.disabled = true;
+        }
+        setTimeout(() => { refreshStatus(); loadConversations(); }, 800);
+      } catch (error) { elements.connectionText.textContent = `Erro: ${error.message}`; }
+      finally { setButtonLoading(button, false); }
+    }
+
+    elements.resetButton.addEventListener('click', () => resetWhatsApp(false));
+    elements.newAccountButton.addEventListener('click', () => resetWhatsApp(true));
     document.getElementById('refresh-button').addEventListener('click', refreshStatus);
     document.getElementById('reload-conversations').addEventListener('click', loadConversations);
     elements.summarizeButton.addEventListener('click', summarizeConversation);

@@ -80,6 +80,21 @@ function ensureDirectories() {
   if (STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION) fs.mkdirSync(AUDIO_DIR, { recursive: true });
 }
 
+function clearLocalConversationHistory() {
+  clearTimeout(conversationIndexWriteTimer);
+  clearTimeout(processedMessageIdsWriteTimer);
+  clearTimeout(contactsWriteTimer);
+  conversationIndexWriteTimer = null;
+  processedMessageIdsWriteTimer = null;
+  contactsWriteTimer = null;
+  conversationIndexCache = null;
+  processedMessageIds = null;
+  processedMessageIdsDirty = false;
+  contactsCache = null;
+  fs.rmSync(DATA_DIR, { recursive: true, force: true });
+  ensureDirectories();
+}
+
 function readJson(file, fallback) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -855,11 +870,18 @@ app.post('/api/whatsapp/reset', async (req, res, next) => {
       // A conexão pode já estar fechada.
     }
 
+    const clearData = req.body?.clearData === true;
     fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-    ensureDirectories();
+    if (clearData) clearLocalConversationHistory();
+    else ensureDirectories();
     setConnectionStatus('connecting', { qrImage: null, qrUpdatedAt: null, error: null, reconnectAttempt: 0 });
     connectWhatsApp().catch((error) => console.error(`Falha ao gerar novo QR: ${error.message}`));
-    res.status(202).json({ ok: true, message: 'Sessão local removida. Aguarde o novo QR aparecer.' });
+    res.status(202).json({
+      ok: true,
+      message: clearData
+        ? 'Sessão e histórico local removidos. Aguarde o novo QR aparecer.'
+        : 'Sessão local removida. O histórico atual foi preservado. Aguarde o novo QR aparecer.',
+    });
   } catch (error) {
     next(error);
   }

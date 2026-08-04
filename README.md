@@ -26,7 +26,8 @@ Abra `http://localhost:3000`. O servidor fica em `0.0.0.0:3000`, então também 
 1. Abra o painel e espere o QR aparecer.
 2. No WhatsApp do celular, abra **Configurações > Dispositivos conectados > Conectar dispositivo**.
 3. Escaneie o QR do painel. Ele expira rapidamente; o painel atualiza automaticamente.
-4. Para importar conversas anteriores, faça um pareamento novo pelo botão **Refazer conexão / novo QR**. Isso apaga somente a sessão local em `auth/` e cria um novo dispositivo conectado, que solicita o histórico disponível ao WhatsApp.
+4. Para importar conversas anteriores da **mesma conta**, faça um pareamento novo pelo botão **Refazer conexão / novo QR**. Isso apaga somente a sessão local em `auth/`, preserva o histórico já salvo em `data/` e cria um novo dispositivo conectado.
+5. Para conectar **outra conta de WhatsApp**, use **Trocar conta e apagar histórico**. Essa opção remove a sessão e todos os textos, contatos, áudios e resumos locais antes de exibir o QR da nova conta, impedindo que dados de contas diferentes fiquem misturados.
 
 O QR não é enviado ao navegador como texto: o servidor transforma o token em imagem e disponibiliza somente a imagem temporária no painel. Esse era o principal motivo de o projeto anterior exibir QR apenas no terminal, sem uma tela para escanear.
 
