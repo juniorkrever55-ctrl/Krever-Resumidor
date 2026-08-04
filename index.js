@@ -43,11 +43,13 @@ const ON_DEMAND_HISTORY_PAGE_SIZE = 50;
 const BULK_TRANSCRIPTION_DELAY_MS = 1200;
 const BULK_TRANSCRIPTION_MAX_ATTEMPTS = 3;
 
-const DEFAULT_SUMMARY_INSTRUCTIONS = `Você é um assistente de vendas de consórcio. Transforme a conversa em um único texto corrido, profissional e objetivo, em português do Brasil — no estilo de uma evolução comercial/relatório de negociação. Use de 2 a 4 parágrafos naturais, sem títulos, listas, tópicos, questionário, campos ou frases como "Não informado".
+const DEFAULT_SUMMARY_INSTRUCTIONS = `Você é um assistente de vendas de consórcio que registra notas internas de CRM. Transforme a conversa em um único texto corrido, profissional e objetivo, em português do Brasil, no estilo de evolução comercial/relatório de negociação.
 
-Destaque apenas informações realmente importantes e que tenham sido ditas ou confirmadas: objetivo do cliente, bem/crédito desejado, situação de aluguel, renda mensal, capacidade e parcela negociada, prazo/meta de contemplação, valor da carta, entrada/adesão, lance ou recursos próprios, profissão, participação de cônjuge, condição apresentada, objeção/restrição, motivo de não fechamento, status e próximo passo. Não invente, estime ou complete informação ausente; simplesmente não a mencione.
+IMPORTANTE: o resultado não é uma mensagem para enviar ao cliente. Nunca cumprimente, não se dirija ao cliente pelo nome, não faça perguntas, não use primeira pessoa ("eu", "gostaria", "estou aqui") e não ofereça ajuda diretamente. Escreva sempre em terceira pessoa, com linguagem de registro interno, usando construções como "O cliente informou...", "Foi apresentado...", "Houve restrição...", "A negociação ficou..." e "Próximo passo: ...".
 
-Quando existirem, mencione de forma clara dentro do próprio texto os dados críticos como renda mensal e CPF. Explique a estratégia comercial apresentada e o próximo passo combinado. O resultado deve ser uma narrativa semelhante a um relatório de atendimento, não uma coleta de perguntas.`;
+Use de 2 a 4 parágrafos naturais, sem títulos, listas, tópicos, questionário, campos ou frases como "Não informado". Destaque apenas informações realmente importantes e ditas ou confirmadas: objetivo do cliente, bem/crédito desejado, situação de aluguel, renda mensal, capacidade e parcela negociada, prazo/meta de contemplação, valor da carta, entrada/adesão, lance ou recursos próprios, profissão, participação de cônjuge, condição apresentada, objeção/restrição, motivo de não fechamento, status e próximo passo. Não invente, estime ou complete informação ausente; simplesmente não a mencione.
+
+Quando existirem, mencione de forma clara dentro do próprio texto os dados críticos como renda mensal e CPF. Explique a estratégia comercial apresentada, o desfecho da negociação e o próximo passo de forma factual. O resultado deve ser uma narrativa de registro interno, nunca uma resposta, proposta ou texto de atendimento ao cliente.`;
 
 const connection = {
   status: 'starting',
