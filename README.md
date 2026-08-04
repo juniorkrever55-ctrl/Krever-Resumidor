@@ -26,15 +26,23 @@ Abra `http://localhost:3000`. O servidor fica em `0.0.0.0:3000`, então também 
 1. Abra o painel e espere o QR aparecer.
 2. No WhatsApp do celular, abra **Configurações > Dispositivos conectados > Conectar dispositivo**.
 3. Escaneie o QR do painel. Ele expira rapidamente; o painel atualiza automaticamente.
-4. Se aparecer sessão encerrada, ou o QR nunca aparecer depois de um login antigo, clique em **Refazer conexão / novo QR**. Isso apaga somente a sessão local em `auth/` e cria um pareamento novo.
+4. Para importar conversas anteriores, faça um pareamento novo pelo botão **Refazer conexão / novo QR**. Isso apaga somente a sessão local em `auth/` e cria um novo dispositivo conectado, que solicita o histórico disponível ao WhatsApp.
 
 O QR não é enviado ao navegador como texto: o servidor transforma o token em imagem e disponibiliza somente a imagem temporária no painel. Esse era o principal motivo de o projeto anterior exibir QR apenas no terminal, sem uma tela para escanear.
 
+## Histórico e uso da IA
+
+Com `IMPORT_HISTORY=true` (padrão), no primeiro pareamento o app importa e salva localmente as mensagens históricas que o WhatsApp Web disponibilizar. **Essa importação de texto não chama a Groq e não consome créditos de IA.** O WhatsApp decide quanto do histórico entrega ao dispositivo conectado; portanto não há garantia técnica de receber absolutamente toda a vida da conta.
+
+- **Texto histórico:** é apenas gravado em `data/`; não vai para a IA automaticamente.
+- **Áudio novo:** é transcrito pela Groq assim que chega, portanto consome uma requisição de transcrição.
+- **Áudio histórico:** fica sem transcrição por padrão para evitar custo. Mude `TRANSCRIBE_HISTORY_AUDIO=true` no `.env` apenas se quiser tentar transcrevê-los; isso pode consumir muitos créditos e mídias antigas podem não estar mais disponíveis.
+- **Resumo:** só chama a Groq quando você clica em **Gerar resumo da conversa**. Para controlar custo e contexto, cada resumo usa as últimas 1.000 mensagens registradas e no máximo 50.000 caracteres. Um novo clique faz uma nova chamada.
+
 ## O que é salvo
 
-- Apenas mensagens de evento `notify` (novas depois de conectar) são armazenadas. O aplicativo não importa todo o histórico existente por padrão.
-- Conversas e transcrições são salvas localmente em `data/`, que está ignorada pelo Git.
-- Áudios são transcritos pela Groq. Por padrão os arquivos de áudio não ficam em disco (`SAVE_AUDIO_FILES=false`).
+- Conversas, histórico importado e transcrições são salvos localmente em `data/`, que está ignorada pelo Git.
+- Áudios são transcritos pela Groq. Por padrão os arquivos de áudio originais não ficam em disco (`SAVE_AUDIO_FILES=false`).
 - As credenciais da sessão ficam em `auth/`, também ignorada pelo Git.
 
 ## APIs locais

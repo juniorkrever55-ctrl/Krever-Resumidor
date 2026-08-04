@@ -25,11 +25,16 @@ const DATA_DIR = path.join(ROOT_DIR, 'data');
 const CONVERSATIONS_DIR = path.join(DATA_DIR, 'conversations');
 const AUDIO_DIR = path.join(DATA_DIR, 'audio');
 const CONVERSATIONS_INDEX_FILE = path.join(DATA_DIR, 'conversations.json');
+const PROCESSED_MESSAGE_IDS_FILE = path.join(DATA_DIR, 'processed-message-ids.json');
 const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || 'llama-3.1-8b-instant';
 const GROQ_TRANSCRIPTION_MODEL = process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3-turbo';
 const SAVE_AUDIO_FILES = process.env.SAVE_AUDIO_FILES === 'true';
+// O histórico é importado localmente; não chama IA. Áudios antigos ficam desativados por padrão.
+const IMPORT_HISTORY = process.env.IMPORT_HISTORY !== 'false';
+const TRANSCRIBE_HISTORY_AUDIO = process.env.TRANSCRIBE_HISTORY_AUDIO === 'true';
+const MAX_TRACKED_MESSAGE_IDS = Number(process.env.MAX_TRACKED_MESSAGE_IDS || 100000);
 const MAX_AUDIO_BYTES = Number(process.env.MAX_AUDIO_BYTES || 24 * 1024 * 1024);
 const MAX_SUMMARY_CHARS = Number(process.env.MAX_SUMMARY_CHARS || 50000);
 
@@ -56,6 +61,11 @@ const connection = {
 let activeSocket = null;
 let connectionGeneration = 0;
 let reconnectTimer = null;
+let conversationIndexCache = null;
+let conversationIndexWriteTimer = null;
+let processedMessageIds = null;
+let processedMessageIdsDirty = false;
+let processedMessageIdsWriteTimer = null;
 
 ensureDirectories();
 
@@ -96,11 +106,65 @@ function getDisplayName(jid, pushName) {
 }
 
 function loadConversationIndex() {
+  if (conversationIndexCache) return conversationIndexCache;
+
   const index = readJson(CONVERSATIONS_INDEX_FILE, { conversations: {} });
-  if (!index || typeof index !== 'object' || !index.conversations || typeof index.conversations !== 'object') {
-    return { conversations: {} };
+  conversationIndexCache = (!index || typeof index !== 'object' || !index.conversations || typeof index.conversations !== 'object')
+    ? { conversations: {} }
+    : index;
+  return conversationIndexCache;
+}
+
+function flushConversationIndex() {
+  if (!conversationIndexCache) return;
+  clearTimeout(conversationIndexWriteTimer);
+  conversationIndexWriteTimer = null;
+  writeJson(CONVERSATIONS_INDEX_FILE, conversationIndexCache);
+}
+
+function queueConversationIndexWrite() {
+  if (conversationIndexWriteTimer) return;
+  conversationIndexWriteTimer = setTimeout(flushConversationIndex, 350);
+  conversationIndexWriteTimer.unref?.();
+}
+
+function loadProcessedMessageIds() {
+  if (processedMessageIds) return processedMessageIds;
+  const saved = readJson(PROCESSED_MESSAGE_IDS_FILE, { ids: [] });
+  const ids = Array.isArray(saved?.ids) ? saved.ids.filter((id) => typeof id === 'string') : [];
+  processedMessageIds = new Set(ids.slice(-MAX_TRACKED_MESSAGE_IDS));
+  return processedMessageIds;
+}
+
+function flushProcessedMessageIds() {
+  if (!processedMessageIdsDirty || !processedMessageIds) return;
+  clearTimeout(processedMessageIdsWriteTimer);
+  processedMessageIdsWriteTimer = null;
+  const ids = Array.from(processedMessageIds).slice(-MAX_TRACKED_MESSAGE_IDS);
+  processedMessageIds = new Set(ids);
+  writeJson(PROCESSED_MESSAGE_IDS_FILE, { ids });
+  processedMessageIdsDirty = false;
+}
+
+function queueProcessedMessageIdsWrite() {
+  if (processedMessageIdsWriteTimer) return;
+  processedMessageIdsWriteTimer = setTimeout(flushProcessedMessageIds, 500);
+  processedMessageIdsWriteTimer.unref?.();
+}
+
+function hasProcessedMessage(messageId) {
+  return Boolean(messageId && loadProcessedMessageIds().has(messageId));
+}
+
+function markMessageAsProcessed(messageId) {
+  if (!messageId) return;
+  const ids = loadProcessedMessageIds();
+  ids.add(messageId);
+  if (ids.size > MAX_TRACKED_MESSAGE_IDS) {
+    processedMessageIds = new Set(Array.from(ids).slice(-MAX_TRACKED_MESSAGE_IDS));
   }
-  return index;
+  processedMessageIdsDirty = true;
+  queueProcessedMessageIdsWrite();
 }
 
 function toPublicConversation(conversation) {
@@ -114,12 +178,13 @@ function toPublicConversation(conversation) {
   };
 }
 
-function appendConversationEntry({ jid, pushName, fromMe, sender, type, text, timestamp, audio }) {
+function appendConversationEntry({ jid, pushName, fromMe, sender, type, text, timestamp, audio, sourceMessageId }) {
   const id = getConversationId(jid);
   const index = loadConversationIndex();
   const existing = index.conversations[id];
   const entry = {
-    id: crypto.randomUUID(),
+    id: sourceMessageId || crypto.randomUUID(),
+    sourceMessageId: sourceMessageId || null,
     timestamp: timestamp || new Date().toISOString(),
     fromMe: Boolean(fromMe),
     sender: sender || (fromMe ? 'Você' : getDisplayName(jid, pushName)),
@@ -140,7 +205,7 @@ function appendConversationEntry({ jid, pushName, fromMe, sender, type, text, ti
     preview,
   };
 
-  writeJson(CONVERSATIONS_INDEX_FILE, index);
+  queueConversationIndexWrite();
   fs.appendFileSync(getConversationFile(id), `${JSON.stringify(entry)}\n`, { mode: 0o600 });
   return entry;
 }
@@ -270,12 +335,18 @@ async function transcribeAudio(message, audioContent, conversationId) {
   };
 }
 
-async function processWhatsAppMessage(message) {
+async function processWhatsAppMessage(message, { isHistory = false } = {}) {
   const jid = message.key?.remoteJid;
+  const sourceMessageId = message.key?.id;
   if (!jid || jid === 'status@broadcast' || jid.endsWith('@broadcast')) return;
+  if (hasProcessedMessage(sourceMessageId)) return;
 
   const content = extractMessageContent(message.message);
   if (!content) return;
+
+  // Eventos de histórico podem chegar em mais de um lote. Marca antes de processar
+  // para que o mesmo áudio/texto não seja salvo ou enviado à Groq duas vezes.
+  markMessageAsProcessed(sourceMessageId);
 
   const fromMe = Boolean(message.key?.fromMe);
   const pushName = message.pushName;
@@ -284,11 +355,28 @@ async function processWhatsAppMessage(message) {
   const text = getMessageText(content);
 
   if (text) {
-    appendConversationEntry({ jid, pushName, fromMe, sender, type: 'text', text, timestamp });
+    appendConversationEntry({ jid, pushName, fromMe, sender, type: 'text', text, timestamp, sourceMessageId });
   }
 
   const audioContent = getAudioContent(content);
   if (!audioContent) return;
+
+  // Importar o histórico textual não consome créditos da Groq. Por padrão, um áudio
+  // antigo fica registrado sem chamar a IA; áudios novos continuam sendo transcritos.
+  if (isHistory && !TRANSCRIBE_HISTORY_AUDIO) {
+    appendConversationEntry({
+      jid,
+      pushName,
+      fromMe,
+      sender,
+      type: 'audio',
+      text: '[Áudio histórico — não transcrito para não consumir créditos da IA.]',
+      timestamp,
+      sourceMessageId,
+      audio: { mimeType: audioContent.mimetype || 'audio/ogg', transcriptionStatus: 'skipped_history' },
+    });
+    return;
+  }
 
   const conversationId = getConversationId(jid);
   try {
@@ -301,6 +389,7 @@ async function processWhatsAppMessage(message) {
       type: 'audio',
       text: transcription.text,
       timestamp,
+      sourceMessageId,
       audio: {
         mimeType: audioContent.mimetype || 'audio/ogg',
         seconds: Number(audioContent.seconds) || null,
@@ -317,6 +406,7 @@ async function processWhatsAppMessage(message) {
       type: 'audio',
       text: '[Áudio recebido — não foi possível transcrever agora. Verifique GROQ_API_KEY, o modelo e o limite da conta.]',
       timestamp,
+      sourceMessageId,
       audio: { mimeType: audioContent.mimetype || 'audio/ogg', transcriptionStatus: 'failed' },
     });
   }
@@ -359,11 +449,13 @@ async function connectWhatsApp() {
     const socket = makeWASocket({
       auth: state,
       ...(version ? { version } : {}),
-      browser: Browsers.ubuntu('Chrome'),
+      // A identificação Desktop permite ao WhatsApp entregar o histórico disponível no pareamento.
+      browser: Browsers.macOS('Desktop'),
       // O painel já expõe o estado da conexão; evita despejar detalhes de socket no terminal.
       logger: pino({ level: 'silent' }),
       markOnlineOnConnect: false,
-      syncFullHistory: false,
+      syncFullHistory: IMPORT_HISTORY,
+      shouldSyncHistoryMessage: () => IMPORT_HISTORY,
       generateHighQualityLinkPreview: false,
     });
     activeSocket = socket;
@@ -422,12 +514,21 @@ async function connectWhatsApp() {
     });
 
     socket.ev.on('messages.upsert', ({ messages, type }) => {
-      // "append" costuma ser histórico sincronizado. O app grava apenas mensagens novas,
-      // evitando importar todo o histórico sem uma ação explícita do usuário.
-      if (type !== 'notify') return;
+      const isHistory = type === 'append';
+      if (isHistory && !IMPORT_HISTORY) return;
       for (const message of messages) {
-        processWhatsAppMessage(message).catch((error) => {
+        processWhatsAppMessage(message, { isHistory }).catch((error) => {
           console.error(`Erro ao processar mensagem do WhatsApp: ${error.message}`);
+        });
+      }
+    });
+
+    socket.ev.on('messaging-history.set', ({ messages }) => {
+      if (!IMPORT_HISTORY) return;
+      console.log(`Recebido lote de histórico: ${messages.length} mensagem(ns). Importando somente localmente…`);
+      for (const message of messages) {
+        processWhatsAppMessage(message, { isHistory: true }).catch((error) => {
+          console.error(`Erro ao importar mensagem do histórico: ${error.message}`);
         });
       }
     });
@@ -581,6 +682,17 @@ app.use((error, req, res, next) => { // eslint-disable-line no-unused-vars
   const status = Number(error.statusCode) || 500;
   if (status >= 500) console.error(`Erro em ${req.method} ${req.path}: ${error.message}`);
   res.status(status).json({ error: error.message || 'Ocorreu um erro inesperado.' });
+});
+
+process.on('SIGINT', () => {
+  flushConversationIndex();
+  flushProcessedMessageIds();
+  process.exit(0);
+});
+process.on('SIGTERM', () => {
+  flushConversationIndex();
+  flushProcessedMessageIds();
+  process.exit(0);
 });
 
 app.listen(PORT, '0.0.0.0', () => {
