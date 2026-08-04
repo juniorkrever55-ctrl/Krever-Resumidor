@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1220">
+  <title>Consórcio | Central de conversas</title>
+  <style>
+    :root { --bg:#08111f; --panel:#101c2f; --panel-2:#14233a; --line:#243a58; --text:#e8f0ff; --muted:#9cafc9; --blue:#4da3ff; --cyan:#4de0d2; --red:#ff7b89; --yellow:#f6c863; --shadow:0 18px 50px rgba(0,0,0,.24); }
+    * { box-sizing:border-box; }
+    body { margin:0; min-width:320px; font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--text); background:radial-gradient(circle at 10% -20%,#153966 0,transparent 36rem),var(--bg); }
+    button, textarea { font:inherit; }
+    button { border:0; cursor:pointer; }
+    button:focus-visible, textarea:focus-visible { outline:3px solid rgba(77,163,255,.55); outline-offset:2px; }
+    .shell { max-width:1280px; margin:auto; padding:30px 22px 48px; }
+    header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin-bottom:24px; }
+    .eyebrow { margin:0 0 6px; color:var(--cyan); text-transform:uppercase; font-size:.72rem; letter-spacing:.12em; font-weight:800; }
+    h1 { margin:0; font-size:clamp(1.55rem,3vw,2.25rem); letter-spacing:-.045em; }
+    .subhead { max-width:680px; margin:8px 0 0; color:var(--muted); line-height:1.5; font-size:.96rem; }
+    .pill { display:inline-flex; align-items:center; gap:8px; flex-shrink:0; padding:9px 12px; border:1px solid var(--line); border-radius:999px; background:rgba(16,28,47,.72); color:var(--muted); font-size:.82rem; white-space:nowrap; }
+    .dot { width:8px; height:8px; border-radius:50%; background:var(--yellow); box-shadow:0 0 0 4px rgba(246,200,99,.11); }
+    .dot.connected { background:var(--cyan); box-shadow:0 0 0 4px rgba(77,224,210,.12); }
+    .dot.error { background:var(--red); box-shadow:0 0 0 4px rgba(255,123,137,.13); }
+    .card { border:1px solid var(--line); border-radius:18px; background:linear-gradient(135deg,rgba(20,35,58,.96),rgba(12,23,39,.96)); box-shadow:var(--shadow); }
+    .connection { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:24px; padding:23px; margin-bottom:22px; }
+    h2 { margin:0; font-size:1.04rem; letter-spacing:-.02em; }
+    .status-title { display:flex; align-items:center; gap:10px; margin-bottom:9px; }
+    .status-text, .hint { color:var(--muted); line-height:1.5; font-size:.9rem; }
+    .status-text { margin:0; max-width:690px; }
+    .warning { margin-top:12px; padding:10px 12px; border:1px solid rgba(246,200,99,.38); border-radius:10px; color:#fde6a3; background:rgba(246,200,99,.08); font-size:.82rem; line-height:1.45; }
+    .connection-actions { display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; margin-top:16px; }
+    .button { display:inline-flex; justify-content:center; align-items:center; min-height:40px; padding:9px 14px; border-radius:10px; font-weight:750; font-size:.86rem; color:#06111f; background:linear-gradient(135deg,var(--cyan),#76a9ff); }
+    .button:hover { filter:brightness(1.06); transform:translateY(-1px); }
+    .button.secondary { color:var(--text); background:transparent; border:1px solid var(--line); }
+    .button:disabled { opacity:.54; cursor:wait; transform:none; }
+    .qr-area { width:176px; min-height:176px; border:1px dashed #3a577b; border-radius:14px; display:grid; place-items:center; overflow:hidden; background:#0a1627; }
+    .qr-area img { display:block; width:100%; height:100%; object-fit:cover; background:#fff; padding:7px; }
+    .qr-placeholder { padding:18px; color:var(--muted); text-align:center; font-size:.78rem; line-height:1.45; }
+    .layout { display:grid; grid-template-columns:310px minmax(0,1fr); gap:22px; align-items:start; }
+    .sidebar { overflow:hidden; }
+    .sidebar-top { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:17px 16px 12px; }
+    .sidebar-top .button { min-height:33px; padding:6px 9px; font-size:.77rem; }
+    .conversation-list { max-height:610px; overflow:auto; padding:0 8px 9px; }
+    .conversation { width:100%; padding:13px 10px; color:var(--text); text-align:left; background:transparent; border-radius:11px; }
+    .conversation:hover, .conversation.active { background:#1b3150; }
+    .conversation-name { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; font-size:.9rem; }
+    .conversation-preview { display:block; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:.78rem; }
+    .conversation-date { display:block; margin-top:5px; color:#7187a5; font-size:.7rem; }
+    .empty { padding:23px 17px; color:var(--muted); text-align:center; font-size:.86rem; line-height:1.5; }
+    .main { min-height:610px; overflow:hidden; }
+    .main-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:17px 19px; border-bottom:1px solid var(--line); }
+    .main-heading p { margin:4px 0 0; color:var(--muted); font-size:.78rem; }
+    .entries { min-height:252px; max-height:430px; padding:17px 19px; overflow:auto; background:rgba(5,13,25,.2); }
+    .message { max-width:88%; margin:0 0 12px; padding:10px 12px; border:1px solid #263c5a; border-radius:4px 12px 12px 12px; background:#142640; }
+    .message.own { margin-left:auto; border-radius:12px 4px 12px 12px; border-color:rgba(77,224,210,.25); background:#10343a; }
+    .message-meta { margin-bottom:5px; color:#8fa5c1; font-size:.7rem; }
+    .message-audio { color:var(--cyan); font-size:.72rem; font-weight:750; text-transform:uppercase; letter-spacing:.05em; }
+    .message-text { white-space:pre-wrap; overflow-wrap:anywhere; font-size:.88rem; line-height:1.48; }
+    .summary-area { padding:18px 19px 20px; border-top:1px solid var(--line); }
+    label { display:block; margin-bottom:7px; color:#b9c9df; font-size:.78rem; font-weight:750; }
+    textarea { display:block; width:100%; min-height:88px; resize:vertical; padding:10px 12px; color:var(--text); border:1px solid #304866; border-radius:10px; background:#091525; line-height:1.45; font-size:.84rem; }
+    .summary-actions { display:flex; align-items:center; gap:12px; margin-top:11px; }
+    .summary-output { margin-top:15px; padding:14px; min-height:62px; border:1px solid #29425f; border-radius:11px; color:#dce9fb; background:#091525; white-space:pre-wrap; overflow-wrap:anywhere; font-size:.87rem; line-height:1.55; }
+    .manual { margin-top:22px; padding:19px; }
+    .manual-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .manual textarea { min-height:170px; }
+    .small { margin:5px 0 0; color:var(--muted); font-size:.75rem; line-height:1.42; }
+    .hidden { display:none !important; }
+    @media (max-width:800px) { .shell { padding:22px 14px 38px; } header { display:block; } header .pill { margin-top:14px; } .connection { grid-template-columns:1fr; } .qr-area { width:150px; min-height:150px; } .layout { grid-template-columns:1fr; } .conversation-list { max-height:240px; } .main { min-height:auto; } .manual-grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <p class="eyebrow">Assistente de consórcio</p>
+        <h1>Central de conversas</h1>
+        <p class="subhead">Conecte seu WhatsApp, acompanhe as mensagens novas, transcreva áudios e gere resumos objetivos com IA.</p>
+      </div>
+      <div class="pill"><span class="dot" id="header-dot"></span><span id="header-status">Iniciando conexão</span></div>
+    </header>
+
+    <section class="card connection" aria-labelledby="whatsapp-title">
+      <div>
+        <div class="status-title"><span class="dot" id="connection-dot"></span><h2 id="whatsapp-title">WhatsApp</h2></div>
+        <p class="status-text" id="connection-text">Preparando a conexão com o WhatsApp…</p>
+        <p class="warning hidden" id="groq-warning">A chave da Groq ainda não foi configurada. O WhatsApp pode conectar, mas resumos e transcrição de áudio só funcionarão depois de criar o arquivo <strong>.env</strong>.</p>
+        <div class="connection-actions">
+          <button class="button secondary" type="button" id="reset-button">Refazer conexão / novo QR</button>
+          <button class="button secondary" type="button" id="refresh-button">Atualizar</button>
+        </div>
+      </div>
+      <div class="qr-area" aria-live="polite">
+        <img class="hidden" id="qr-image" alt="QR Code para conectar o WhatsApp">
+        <span class="qr-placeholder" id="qr-placeholder">O QR aparecerá aqui quando a conexão estiver pronta.</span>
+      </div>
+    </section>
+
+    <div class="layout">
+      <aside class="card sidebar" aria-label="Conversas recebidas">
+        <div class="sidebar-top"><h2>Conversas</h2><button class="button secondary" type="button" id="reload-conversations">Atualizar</button></div>
+        <div class="conversation-list" id="conversation-list"><p class="empty">Ainda não há mensagens novas registradas.</p></div>
+      </aside>
+
+      <main class="card main">
+        <div class="main-heading">
+          <div><h2 id="conversation-title">Selecione uma conversa</h2><p id="conversation-info">As novas mensagens aparecem aqui depois da conexão.</p></div>
+        </div>
+        <div class="entries" id="entries"><p class="empty">Conecte o WhatsApp e escolha uma conversa para ver o histórico armazenado.</p></div>
+        <section class="summary-area">
+          <label for="instructions">Instruções do resumo</label>
+          <textarea id="instructions">Você é um assistente de vendas de consórcio. Resuma a conversa de forma objetiva em português do Brasil. Só considere que é uma oportunidade de consórcio quando houver sinais claros disso. Nunca invente dados. Use exatamente esta estrutura:
+
+Status: ...
+Cliente: ...
+Interesse/objetivo: ...
+Dados informados: ...
+Objeções ou pendências: ...
+Próxima ação recomendada: ...
+
+Se a conversa for pessoal ou não tiver dados de venda de consórcio, responda apenas: "Conversação pessoal — sem dados de venda de consórcio."</textarea>
+          <div class="summary-actions"><button class="button" type="button" id="summarize-button" disabled>Gerar resumo da conversa</button><span class="hint" id="summary-hint">Escolha uma conversa para resumir.</span></div>
+          <div class="summary-output" id="summary-output" aria-live="polite">O resumo aparecerá aqui.</div>
+        </section>
+      </main>
+    </div>
+
+    <section class="card manual">
+      <h2>Resumo de texto avulso</h2>
+      <p class="small">Use esta opção para testar a IA ou resumir uma conversa colada manualmente. Não envie dados sem autorização do titular.</p>
+      <div class="manual-grid">
+        <div><label for="manual-text">Conversa</label><textarea id="manual-text" placeholder="Cole uma conversa aqui…"></textarea></div>
+        <div><label>Resultado</label><div class="summary-output" id="manual-output">O resumo manual aparecerá aqui.</div><button class="button" type="button" id="manual-button">Gerar resumo</button></div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const state = { selectedConversationId: null, instructions: document.getElementById('instructions').value };
+    const elements = {
+      headerDot: document.getElementById('header-dot'), headerStatus: document.getElementById('header-status'),
+      connectionDot: document.getElementById('connection-dot'), connectionText: document.getElementById('connection-text'),
+      qrImage: document.getElementById('qr-image'), qrPlaceholder: document.getElementById('qr-placeholder'),
+      groqWarning: document.getElementById('groq-warning'), resetButton: document.getElementById('reset-button'),
+      conversationList: document.getElementById('conversation-list'), conversationTitle: document.getElementById('conversation-title'),
+      conversationInfo: document.getElementById('conversation-info'), entries: document.getElementById('entries'),
+      summarizeButton: document.getElementById('summarize-button'), summaryHint: document.getElementById('summary-hint'),
+      summaryOutput: document.getElementById('summary-output'), instructions: document.getElementById('instructions'),
+      manualText: document.getElementById('manual-text'), manualOutput: document.getElementById('manual-output'), manualButton: document.getElementById('manual-button'),
+    };
+
+    const statusCopy = {
+      starting: 'Iniciando a conexão com o WhatsApp…',
+      connecting: 'Conectando ao WhatsApp. Aguarde alguns segundos.',
+      awaiting_qr: 'Abra o WhatsApp no celular → Dispositivos conectados → Conectar dispositivo e escaneie este QR.',
+      connected: 'WhatsApp conectado. Mensagens novas serão registradas automaticamente.',
+      reconnecting: 'A conexão foi interrompida e está sendo restabelecida…',
+      logged_out: 'A sessão foi encerrada. Clique em “Refazer conexão” para gerar um novo QR.',
+      error: 'Não foi possível preparar a conexão.',
+    };
+
+    function setButtonLoading(button, isLoading, label) {
+      if (isLoading) { button.dataset.label = button.textContent; button.textContent = label; button.disabled = true; }
+      else { button.textContent = button.dataset.label || button.textContent; button.disabled = false; }
+    }
+
+    async function request(url, options = {}) {
+      const response = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Não foi possível concluir a solicitação.');
+      return data;
+    }
+
+    function formatDate(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(date);
+    }
+
+    function setStatus(status) {
+      const isConnected = status.status === 'connected';
+      const isError = ['error', 'logged_out'].includes(status.status);
+      const label = isConnected ? 'Conectado' : status.status === 'awaiting_qr' ? 'Aguardando QR' : status.status === 'reconnecting' ? 'Reconectando' : isError ? 'Atenção necessária' : 'Conectando';
+      [elements.headerDot, elements.connectionDot].forEach((dot) => { dot.className = `dot${isConnected ? ' connected' : isError ? ' error' : ''}`; });
+      elements.headerStatus.textContent = label;
+      elements.connectionText.textContent = status.error || statusCopy[status.status] || statusCopy.connecting;
+      elements.groqWarning.classList.toggle('hidden', status.groqConfigured);
+
+      if (status.qrImage && status.status === 'awaiting_qr') {
+        if (elements.qrImage.src !== status.qrImage) elements.qrImage.src = status.qrImage;
+        elements.qrImage.classList.remove('hidden');
+        elements.qrPlaceholder.classList.add('hidden');
+      } else {
+        elements.qrImage.removeAttribute('src');
+        elements.qrImage.classList.add('hidden');
+        elements.qrPlaceholder.classList.remove('hidden');
+        elements.qrPlaceholder.textContent = isConnected ? 'Conexão concluída.' : status.status === 'reconnecting' ? 'Gerando uma nova conexão…' : 'O QR aparecerá aqui quando a conexão estiver pronta.';
+      }
+    }
+
+    async function refreshStatus() {
+      try { setStatus(await request('/api/whatsapp/status')); }
+      catch (error) { elements.connectionText.textContent = `Erro ao consultar o status: ${error.message}`; }
+    }
+
+    function renderConversations(conversations) {
+      elements.conversationList.replaceChildren();
+      if (!conversations.length) {
+        const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = 'Ainda não há mensagens novas registradas.'; elements.conversationList.append(empty); return;
+      }
+      conversations.forEach((conversation) => {
+        const button = document.createElement('button'); button.type = 'button'; button.className = `conversation${conversation.id === state.selectedConversationId ? ' active' : ''}`;
+        const name = document.createElement('span'); name.className = 'conversation-name'; name.textContent = conversation.name;
+        const preview = document.createElement('span'); preview.className = 'conversation-preview'; preview.textContent = conversation.preview || 'Sem prévia';
+        const date = document.createElement('span'); date.className = 'conversation-date'; date.textContent = formatDate(conversation.lastMessageAt);
+        button.append(name, preview, date); button.addEventListener('click', () => loadConversation(conversation.id)); elements.conversationList.append(button);
+      });
+    }
+
+    async function loadConversations() {
+      try {
+        const data = await request('/api/conversations'); renderConversations(data.conversations);
+      } catch (error) { elements.conversationList.textContent = `Erro: ${error.message}`; }
+    }
+
+    function renderEntries(entries) {
+      elements.entries.replaceChildren();
+      if (!entries.length) { const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = 'Nenhuma mensagem registrada nesta conversa.'; elements.entries.append(empty); return; }
+      entries.forEach((entry) => {
+        const message = document.createElement('article'); message.className = `message${entry.fromMe ? ' own' : ''}`;
+        const meta = document.createElement('div'); meta.className = 'message-meta'; meta.textContent = `${entry.fromMe ? 'Você' : entry.sender || 'Contato'} · ${formatDate(entry.timestamp)}`;
+        message.append(meta);
+        if (entry.type === 'audio') { const audio = document.createElement('div'); audio.className = 'message-audio'; audio.textContent = 'Áudio transcrito'; message.append(audio); }
+        const text = document.createElement('div'); text.className = 'message-text'; text.textContent = entry.text; message.append(text); elements.entries.append(message);
+      });
+      elements.entries.scrollTop = elements.entries.scrollHeight;
+    }
+
+    async function loadConversation(id) {
+      try {
+        const data = await request(`/api/conversations/${encodeURIComponent(id)}?limit=500`);
+        state.selectedConversationId = id;
+        elements.conversationTitle.textContent = data.conversation.name;
+        elements.conversationInfo.textContent = `${data.conversation.messageCount} mensagem(ns) registrada(s) · ${data.conversation.isGroup ? 'grupo' : 'conversa individual'}`;
+        elements.summarizeButton.disabled = false;
+        elements.summaryHint.textContent = 'A IA receberá as mensagens registradas desta conversa.';
+        elements.summaryOutput.textContent = 'O resumo aparecerá aqui.';
+        renderEntries(data.entries); loadConversations();
+      } catch (error) { elements.summaryOutput.textContent = `Erro ao abrir conversa: ${error.message}`; }
+    }
+
+    async function summarizeConversation() {
+      if (!state.selectedConversationId) return;
+      setButtonLoading(elements.summarizeButton, true, 'Gerando resumo…'); elements.summaryOutput.textContent = 'Enviando conversa para a IA…';
+      try {
+        const data = await request(`/api/conversations/${encodeURIComponent(state.selectedConversationId)}/summarize`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value }) });
+        elements.summaryOutput.textContent = data.summary;
+      } catch (error) { elements.summaryOutput.textContent = `Erro: ${error.message}`; }
+      finally { setButtonLoading(elements.summarizeButton, false); }
+    }
+
+    async function summarizeManual() {
+      setButtonLoading(elements.manualButton, true, 'Gerando resumo…'); elements.manualOutput.textContent = 'Enviando texto para a IA…';
+      try {
+        const data = await request('/api/summarize', { method: 'POST', body: JSON.stringify({ text: elements.manualText.value, instructions: elements.instructions.value }) });
+        elements.manualOutput.textContent = data.summary;
+      } catch (error) { elements.manualOutput.textContent = `Erro: ${error.message}`; }
+      finally { setButtonLoading(elements.manualButton, false); }
+    }
+
+    elements.resetButton.addEventListener('click', async () => {
+      if (!confirm('Isso remove a sessão local atual e pede um novo QR. Deseja continuar?')) return;
+      setButtonLoading(elements.resetButton, true, 'Preparando QR…');
+      try { const result = await request('/api/whatsapp/reset', { method: 'POST', body: '{}' }); elements.connectionText.textContent = result.message; setTimeout(refreshStatus, 800); }
+      catch (error) { elements.connectionText.textContent = `Erro: ${error.message}`; }
+      finally { setButtonLoading(elements.resetButton, false); }
+    });
+    document.getElementById('refresh-button').addEventListener('click', refreshStatus);
+    document.getElementById('reload-conversations').addEventListener('click', loadConversations);
+    elements.summarizeButton.addEventListener('click', summarizeConversation);
+    elements.manualButton.addEventListener('click', summarizeManual);
+
+    refreshStatus(); loadConversations();
+    // QR expira rápido; a tela acompanha a conexão sem expor a string do QR.
+    setInterval(refreshStatus, 5000); setInterval(loadConversations, 15000);
+  </script>
+</body>
+</html>

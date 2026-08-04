@@ -1,0 +1,13 @@
+# Segredos e sessões do WhatsApp
+auth/
+.env
+.env.*
+!.env.example
+
+# Dados locais de conversas e mídia
+data/
+
+# Dependências e logs
+node_modules/
+npm-debug.log*
+*.log
