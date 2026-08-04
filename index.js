@@ -53,7 +53,7 @@ Na lista, priorize: CPF ou CNPJ, renda mensal, valor da carta/crédito, parcelas
 
 Destaque apenas informações realmente importantes: objetivo do cliente, bem/crédito desejado, situação de aluguel, renda mensal, capacidade e parcela negociada, prazo/meta de contemplação, valor da carta, valor disponível para lance de recurso próprio, profissão, participação de cônjuge, condição apresentada, objeção/restrição, motivo de não fechamento, status e próximo passo. Não invente, estime ou complete informação ausente; simplesmente não a mencione.
 
-Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente informado (11 dígitos) e de CNPJ somente um CNPJ explicitamente informado (14 dígitos); não suponha um tipo de documento. Quando existirem, mencione de forma clara na narrativa e também na lista os dados críticos como renda mensal e documento. Explique a estratégia comercial apresentada, o desfecho da negociação e o próximo passo de forma factual. O resultado deve ser uma nota interna de CRM, nunca uma resposta, proposta ou texto de atendimento ao cliente.`;
+Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente informado (11 dígitos) e de CNPJ somente um CNPJ explicitamente informado (14 dígitos); não suponha um tipo de documento. Quando existirem, mencione de forma clara na narrativa e também na lista os dados críticos como renda mensal e documento. Nunca trate o nome/identificador do remetente no cabeçalho da conversa como dado comercial: números técnicos de LID/JID não são CPF, CNPJ, renda, lance ou qualquer informação do cliente. Use apenas informações presentes no conteúdo das mensagens. Explique a estratégia comercial apresentada, o desfecho da negociação e o próximo passo de forma factual. O resultado deve ser uma nota interna de CRM, nunca uma resposta, proposta ou texto de atendimento ao cliente.`;
 
 const connection = {
   status: 'starting',
@@ -131,6 +131,11 @@ function phoneFromJid(jid) {
   return jid.split('@')[0].split(':')[0].replace(/\D/g, '');
 }
 
+function isTechnicalWhatsAppIdentifier(value) {
+  // LIDs são identificadores internos do WhatsApp e não representam CPF/CNPJ/nome do cliente.
+  return /^\d{14,}(?::\d+)?$/.test(String(value || '').trim());
+}
+
 function loadContacts() {
   if (contactsCache) return contactsCache;
   const saved = readJson(CONTACTS_FILE, { contacts: {} });
@@ -169,7 +174,10 @@ function getDisplayName(jid, pushName) {
   const knownName = knownNameFor(jid, pushName);
   if (knownName) return knownName;
   const localPart = jid.split('@')[0] || 'Conversa';
-  return jid.endsWith('@g.us') ? `Grupo ${localPart}` : localPart;
+  if (jid.endsWith('@lid') || isTechnicalWhatsAppIdentifier(localPart)) return 'Cliente';
+  const phone = phoneFromJid(jid);
+  if (phone) return `+${phone}`;
+  return jid.endsWith('@g.us') ? `Grupo ${localPart}` : 'Cliente';
 }
 
 function updateConversationContactMetadata(jid) {
@@ -276,14 +284,30 @@ function markMessageAsProcessed(messageId) {
 }
 
 function toPublicConversation(conversation) {
+  const name = isTechnicalWhatsAppIdentifier(conversation.name)
+    ? (conversation.phone ? `+${conversation.phone}` : 'Contato sem nome')
+    : (conversation.name || 'Contato sem nome');
   return {
     id: conversation.id,
-    name: conversation.name,
+    name,
     phone: conversation.phone || '',
     isGroup: Boolean(conversation.isGroup),
     messageCount: conversation.messageCount || 0,
     lastMessageAt: conversation.lastMessageAt || null,
     preview: conversation.preview || '',
+  };
+}
+
+function getSummarySpeaker(entry) {
+  if (entry.fromMe) return 'Você';
+  const sender = String(entry.sender || '').trim();
+  return !sender || isTechnicalWhatsAppIdentifier(sender) ? 'Cliente' : sender;
+}
+
+function toPublicEntry(entry) {
+  return {
+    ...entry,
+    sender: getSummarySpeaker(entry),
   };
 }
 
@@ -1173,7 +1197,7 @@ app.get('/api/conversations/:id', (req, res) => {
   const index = loadConversationIndex();
   const conversation = index.conversations[id];
   if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
-  return res.json({ conversation: toPublicConversation(conversation), entries: loadConversationEntries(id, req.query.limit) });
+  return res.json({ conversation: toPublicConversation(conversation), entries: loadConversationEntries(id, req.query.limit).map(toPublicEntry) });
 });
 
 app.post('/api/conversations/:id/history', async (req, res, next) => {
@@ -1241,7 +1265,7 @@ app.get('/api/conversations/:id/audio/:messageId', (req, res, next) => {
 app.post('/api/conversations/:id/audio/:messageId/transcribe', async (req, res, next) => {
   try {
     const entry = await transcribeStoredConversationAudio(req.params.id, req.params.messageId);
-    return res.json({ entry });
+    return res.json({ entry: toPublicEntry(entry) });
   } catch (error) {
     return next(error);
   }
@@ -1264,7 +1288,7 @@ app.post('/api/conversations/:id/summarize', async (req, res, next) => {
     if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
 
     const transcript = loadConversationEntries(id, 1000)
-      .map((entry) => `[${entry.timestamp}] ${entry.fromMe ? 'Você' : entry.sender}: ${entry.text}`)
+      .map((entry) => `[${entry.timestamp}] ${getSummarySpeaker(entry)}: ${entry.text}`)
       .join('\n');
     const safeTranscript = transcript.slice(-MAX_SUMMARY_CHARS);
     const summary = await summarize(safeTranscript, req.body?.instructions);
