@@ -5,6 +5,7 @@ require('dotenv').config();
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { execFile } = require('child_process');
 const express = require('express');
 const pino = require('pino');
 const QRCode = require('qrcode');
@@ -20,6 +21,7 @@ const {
 
 const ROOT_DIR = __dirname;
 const PORT = Number(process.env.PORT || 3000);
+const OPEN_BROWSER = process.env.OPEN_BROWSER !== 'false';
 const AUTH_DIR = path.resolve(process.env.AUTH_DIR || path.join(ROOT_DIR, 'auth'));
 const DATA_DIR = path.join(ROOT_DIR, 'data');
 const CONVERSATIONS_DIR = path.join(DATA_DIR, 'conversations');
@@ -1638,6 +1640,33 @@ async function summarize(text, instructions, provider) {
   return result;
 }
 
+function openDashboard(url) {
+  if (!OPEN_BROWSER) return;
+
+  try {
+    if (process.platform === 'win32') {
+      const chromePaths = [
+        process.env.PROGRAMFILES && path.join(process.env.PROGRAMFILES, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        process.env['PROGRAMFILES(X86)'] && path.join(process.env['PROGRAMFILES(X86)'], 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      ].filter(Boolean);
+      const chrome = chromePaths.find((file) => fs.existsSync(file));
+      const child = chrome
+        ? execFile(chrome, [url], { windowsHide: true })
+        : execFile('cmd.exe', ['/c', 'start', '', url], { windowsHide: true });
+      child.unref();
+      return;
+    }
+
+    const child = process.platform === 'darwin'
+      ? execFile('open', ['-a', 'Google Chrome', url])
+      : execFile('xdg-open', [url]);
+    child.unref();
+  } catch (error) {
+    console.warn(`Não foi possível abrir o navegador automaticamente: ${error.message}`);
+  }
+}
+
 const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
@@ -1918,7 +1947,9 @@ process.on('SIGTERM', () => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Painel disponível em http://localhost:${PORT}`);
+  const dashboardUrl = `http://localhost:${PORT}`;
+  console.log(`Painel disponível em ${dashboardUrl}`);
+  openDashboard(dashboardUrl);
   if (!GROQ_API_KEY) console.warn('GROQ_API_KEY ausente: resumos, transcrições e análise de imagens ficarão indisponíveis até configurar o .env.');
   connectWhatsApp().catch((error) => console.error(`Falha ao iniciar WhatsApp: ${error.message}`));
 });

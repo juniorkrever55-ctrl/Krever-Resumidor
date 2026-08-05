@@ -19,7 +19,7 @@ cp .env.example .env
 npm start
 ```
 
-Abra `http://localhost:3000`. O servidor fica em `0.0.0.0:3000`, então também funciona em um ambiente de preview.
+Ao executar `npm start`, o painel abre automaticamente no Google Chrome em `http://localhost:3000`. Para desativar esse comportamento, use `OPEN_BROWSER=false` no `.env`. O servidor fica em `0.0.0.0:3000`, então também funciona em um ambiente de preview.
 
 ## Conectando o QR Code
 
