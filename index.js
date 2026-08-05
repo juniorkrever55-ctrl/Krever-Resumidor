@@ -38,6 +38,15 @@ const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434'
 // Modelo menor sem modo de raciocínio exposto; mais adequado para computadores com 8 GB de RAM.
 const OLLAMA_CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL || 'llama3.2:3b';
 const OLLAMA_KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || '0';
+const DEFAULT_GEMINI_CHAT_URL = 'https://gemini.google.com/app';
+const GEMINI_CHAT_URL = (() => {
+  try {
+    const url = new URL(process.env.GEMINI_CHAT_URL || DEFAULT_GEMINI_CHAT_URL);
+    return url.hostname === 'gemini.google.com' ? url.toString() : DEFAULT_GEMINI_CHAT_URL;
+  } catch {
+    return DEFAULT_GEMINI_CHAT_URL;
+  }
+})();
 // Para transcrever sob demanda, o áudio precisa ficar salvo somente neste computador.
 const STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION = process.env.STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION !== 'false';
 const STORE_IMAGES_FOR_SUMMARY = process.env.STORE_IMAGES_FOR_SUMMARY !== 'false';
@@ -64,7 +73,9 @@ Na lista, priorize: CPF ou CNPJ, renda mensal, valor da carta/crédito, parcelas
 
 Destaque apenas informações realmente importantes: objetivo do cliente, bem/crédito desejado, situação de aluguel, renda mensal, capacidade e parcela negociada, prazo/meta de contemplação, valor da carta, valor disponível para lance de recurso próprio, profissão, participação de cônjuge, condição apresentada, objeção/restrição, motivo de não fechamento, status e próximo passo. Não invente, estime ou complete informação ausente; simplesmente não a mencione.
 
-Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente informado (11 dígitos) e de CNPJ somente um CNPJ explicitamente informado (14 dígitos); não suponha um tipo de documento. Quando existirem, mencione de forma clara na narrativa e também na lista os dados críticos como renda mensal e documento. Nunca trate o nome/identificador do remetente no cabeçalho da conversa como dado comercial: números técnicos de LID/JID não são CPF, CNPJ, renda, lance ou qualquer informação do cliente. Use apenas informações presentes no conteúdo das mensagens. Explique a estratégia comercial apresentada, o desfecho da negociação e o próximo passo de forma factual. O resultado deve ser uma nota interna de CRM, nunca uma resposta, proposta ou texto de atendimento ao cliente.`;
+Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente informado (11 dígitos) e de CNPJ somente um CNPJ explicitamente informado (14 dígitos); não suponha um tipo de documento. Quando existirem, mencione de forma clara na narrativa e também na lista os dados críticos como renda mensal e documento. Nunca trate o nome/identificador do remetente no cabeçalho da conversa como dado comercial: números técnicos de LID/JID não são CPF, CNPJ, renda, lance ou qualquer informação do cliente. Use apenas informações presentes no conteúdo das mensagens. Explique a estratégia comercial apresentada, o desfecho da negociação e o próximo passo de forma factual. O resultado deve ser uma nota interna de CRM, nunca uma resposta, proposta ou texto de atendimento ao cliente.
+
+FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. Não gere, anexe ou ofereça PDF, documento, arquivo, planilha, apresentação, canvas, link de download ou qualquer outro anexo. Entregue somente a nota interna e a lista de dados relevantes como texto na resposta.`;
 
 const connection = {
   status: 'starting',
@@ -1637,6 +1648,11 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, whatsapp: publicConnectionStatus() });
 });
 
+app.get('/api/assistant-config', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ geminiChatUrl: GEMINI_CHAT_URL });
+});
+
 app.get('/api/whatsapp/status', (req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json(publicConnectionStatus());
@@ -1692,7 +1708,14 @@ app.get('/api/conversations/:id/export.txt', (req, res) => {
   if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
 
   const date = new Date().toISOString().slice(0, 10);
-  const fileName = `${safeExportFileName(toPublicConversation(conversation).name)}-${date}.txt`;
+  const publicConversation = toPublicConversation(conversation);
+  const phone = String(publicConversation.phone || '').replace(/\D/g, '');
+  const displayName = publicConversation.name === 'Cliente' ? '' : publicConversation.name;
+  // Sem nome: usa o número completo para identificar o cliente. Com nome: só os 4 últimos dígitos evitam colisões.
+  const identifier = displayName
+    ? `${safeExportFileName(displayName)}${phone ? `-${phone.slice(-4)}` : ''}`
+    : `cliente${phone ? `-${phone}` : ''}`;
+  const fileName = `${identifier}-${date}.txt`;
   res.set({
     'Content-Type': 'text/plain; charset=utf-8',
     'Content-Disposition': `attachment; filename="${fileName}"`,
