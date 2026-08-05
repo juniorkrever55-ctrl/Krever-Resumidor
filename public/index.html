@@ -126,6 +126,7 @@
         <div class="main-heading">
           <div><h2 id="conversation-title">Selecione uma conversa</h2><p id="conversation-info">As novas mensagens aparecem aqui depois da conexão.</p></div>
           <div class="conversation-actions">
+            <button class="button secondary" type="button" id="prepare-gemini-button" disabled>Preparar para Gemini</button>
             <button class="button secondary" type="button" id="export-txt-button" disabled>Exportar TXT</button>
             <button class="button secondary" type="button" id="transcribe-all-button" disabled>Transcrever todos os áudios</button>
             <button class="button secondary" type="button" id="older-history-button" disabled>Buscar 50 anteriores</button>
@@ -179,7 +180,7 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
       qrImage: document.getElementById('qr-image'), qrPlaceholder: document.getElementById('qr-placeholder'),
       groqWarning: document.getElementById('groq-warning'), resetButton: document.getElementById('reset-button'), newAccountButton: document.getElementById('new-account-button'),
       conversationList: document.getElementById('conversation-list'), conversationSearch: document.getElementById('conversation-search'), conversationTitle: document.getElementById('conversation-title'),
-      conversationInfo: document.getElementById('conversation-info'), exportTxtButton: document.getElementById('export-txt-button'), transcribeAllButton: document.getElementById('transcribe-all-button'), olderHistoryButton: document.getElementById('older-history-button'), entries: document.getElementById('entries'),
+      conversationInfo: document.getElementById('conversation-info'), prepareGeminiButton: document.getElementById('prepare-gemini-button'), exportTxtButton: document.getElementById('export-txt-button'), transcribeAllButton: document.getElementById('transcribe-all-button'), olderHistoryButton: document.getElementById('older-history-button'), entries: document.getElementById('entries'),
       summarizeButton: document.getElementById('summarize-button'), tokenEstimateButton: document.getElementById('token-estimate-button'), tokenEstimate: document.getElementById('token-estimate'), copySummaryButton: document.getElementById('copy-summary-button'), summaryHint: document.getElementById('summary-hint'),
       summaryOutput: document.getElementById('summary-output'), instructions: document.getElementById('instructions'), aiProvider: document.getElementById('ai-provider'), providerNote: document.getElementById('provider-note'),
       manualText: document.getElementById('manual-text'), manualOutput: document.getElementById('manual-output'), manualButton: document.getElementById('manual-button'),
@@ -369,6 +370,7 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
         elements.conversationInfo.textContent = `${data.conversation.messageCount} mensagem(ns) registrada(s) · ${data.conversation.isGroup ? 'grupo' : 'conversa individual'}`;
         elements.summarizeButton.disabled = false;
         elements.tokenEstimateButton.disabled = false;
+        elements.prepareGeminiButton.disabled = false;
         elements.exportTxtButton.disabled = false;
         elements.transcribeAllButton.disabled = false;
         elements.olderHistoryButton.disabled = false;
@@ -421,14 +423,47 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
       return new Promise((resolve) => setTimeout(resolve, milliseconds));
     }
 
-    function exportConversationTxt() {
-      if (!state.selectedConversationId) return;
+    function downloadConversationTxt() {
+      if (!state.selectedConversationId) return false;
       const link = document.createElement('a');
       link.href = `/api/conversations/${encodeURIComponent(state.selectedConversationId)}/export.txt`;
       link.download = '';
       document.body.append(link);
       link.click();
       link.remove();
+      return true;
+    }
+
+    function exportConversationTxt() {
+      downloadConversationTxt();
+    }
+
+    async function prepareForGemini() {
+      if (!state.selectedConversationId) return;
+      // Abre a interface oficial; o anexo do TXT permanece uma ação manual do usuário.
+      window.open('https://gemini.google.com/app', '_blank', 'noopener');
+      downloadConversationTxt();
+
+      const geminiPrompt = `Analise o arquivo TXT que vou anexar. Ele contém o histórico de uma conversa de consórcio.
+
+${elements.instructions.value}`;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(geminiPrompt);
+        } else {
+          const temporary = document.createElement('textarea');
+          temporary.value = geminiPrompt;
+          temporary.style.position = 'fixed';
+          temporary.style.opacity = '0';
+          document.body.append(temporary);
+          temporary.select();
+          document.execCommand('copy');
+          temporary.remove();
+        }
+        elements.conversationInfo.textContent = 'TXT baixado e prompt copiado. No Gemini, anexe o TXT e cole o prompt.';
+      } catch (error) {
+        elements.conversationInfo.textContent = 'TXT baixado. No Gemini, anexe o arquivo e copie o prompt manualmente do campo de instruções.';
+      }
     }
 
     async function transcribeAllAudios() {
@@ -570,6 +605,7 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
           elements.entries.textContent = 'Histórico local apagado. Aguarde a sincronização da nova conta.';
           elements.summarizeButton.disabled = true;
           elements.tokenEstimateButton.disabled = true;
+          elements.prepareGeminiButton.disabled = true;
           elements.exportTxtButton.disabled = true;
           elements.transcribeAllButton.disabled = true;
           elements.tokenEstimate.textContent = 'Selecione uma conversa para estimar o uso de tokens.';
@@ -610,6 +646,7 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
     }
 
     elements.summarizeButton.addEventListener('click', summarizeConversation);
+    elements.prepareGeminiButton.addEventListener('click', prepareForGemini);
     elements.exportTxtButton.addEventListener('click', exportConversationTxt);
     elements.transcribeAllButton.addEventListener('click', transcribeAllAudios);
     elements.tokenEstimateButton.addEventListener('click', updateTokenEstimate);

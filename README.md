@@ -39,6 +39,8 @@ O painel usa os contatos e chats que o WhatsApp disponibiliza na sincronização
 
 Depois de selecionar uma conversa, use **Exportar TXT**. O download contém todo o histórico local, incluindo transcrições de áudio e análises de imagem já realizadas. O arquivo é nomeado com o nome do contato quando disponível; caso contrário, usa `cliente-AAAA-MM-DD.txt`. Nenhuma chamada de IA é feita para exportar.
 
+O botão **Preparar para Gemini** baixa o mesmo TXT, copia o prompt atual e abre o Gemini Chat em outra aba. O anexo do arquivo e o envio da mensagem continuam manuais, dentro da interface oficial do Gemini.
+
 ## Histórico e uso da IA
 
 Com `IMPORT_HISTORY=true` (padrão), no primeiro pareamento o app importa e salva localmente as mensagens históricas que o WhatsApp Web disponibilizar. **Essa importação de texto não chama a Groq e não consome créditos de IA.** O WhatsApp decide quanto do histórico entrega ao dispositivo conectado; portanto não há garantia técnica de receber absolutamente toda a vida da conta.
