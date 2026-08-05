@@ -47,10 +47,7 @@ const WHATSAPP_LOG_LEVEL = process.env.DEBUG_WHATSAPP === 'true' ? 'info' : 'sil
 const IMPORT_HISTORY = process.env.IMPORT_HISTORY !== 'false';
 const MAX_TRACKED_MESSAGE_IDS = Number(process.env.MAX_TRACKED_MESSAGE_IDS || 100000);
 const MAX_AUDIO_BYTES = Number(process.env.MAX_AUDIO_BYTES || 24 * 1024 * 1024);
-// Limite conservador para caber no TPM de contas gratuitas/on-demand da Groq.
-const MAX_SUMMARY_CHARS = Math.min(Number(process.env.MAX_SUMMARY_CHARS || 12000), 12000);
 const MAX_SUBMITTED_SUMMARY_CHARS = Number(process.env.MAX_SUBMITTED_SUMMARY_CHARS || 1000000);
-const MAX_LOCAL_SUMMARY_CHARS = Number(process.env.MAX_LOCAL_SUMMARY_CHARS || 40000);
 const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 4096);
 const ON_DEMAND_HISTORY_PAGE_SIZE = 50;
 const BULK_TRANSCRIPTION_DELAY_MS = 1200;
@@ -1463,19 +1460,10 @@ function normalizeSummaryProvider(provider) {
   return provider === 'ollama' ? 'ollama' : 'groq';
 }
 
-function getSummaryContextLimit(provider) {
-  return normalizeSummaryProvider(provider) === 'ollama' ? MAX_LOCAL_SUMMARY_CHARS : MAX_SUMMARY_CHARS;
-}
-
-function trimTranscriptForProvider(text, provider) {
-  const limit = getSummaryContextLimit(provider);
-  if (text.length <= limit) return text;
-
-  // Mantém início e fim: o início costuma trazer objetivo/contexto e o fim, negociação/próximo passo.
-  const firstPartLength = Math.floor(limit * 0.3);
-  const lastPartLength = limit - firstPartLength;
-  const source = normalizeSummaryProvider(provider) === 'ollama' ? 'limite local configurado' : 'limite da Groq';
-  return `${text.slice(0, firstPartLength)}\n\n[... trecho intermediário omitido para respeitar o ${source} ...]\n\n${text.slice(-lastPartLength)}`;
+function trimTranscriptForProvider(text, provider) { // eslint-disable-line no-unused-vars
+  // A conversa é enviada integralmente por decisão do usuário. O provedor pode recusar
+  // contextos que excedam sua própria janela/limite de tokens, sem cortes silenciosos.
+  return text;
 }
 
 function getSummaryPrompt(instructions) {
@@ -1490,7 +1478,7 @@ function estimateTokens(text) {
 }
 
 function buildConversationTranscript(conversationId) {
-  return loadConversationEntries(conversationId, 1000)
+  return readAllConversationEntries(conversationId)
     .map((entry) => `[${entry.timestamp}] ${getSummarySpeaker(entry)}: ${entry.text}`)
     .join('\n');
 }
@@ -1808,10 +1796,10 @@ app.post('/api/conversations/:id/token-estimate', (req, res, next) => {
       sentCharacters: compactTranscript.length,
       compacted: compactTranscript.length < transcript.length,
       provider,
-      contextLimitCharacters: getSummaryContextLimit(provider),
+      contextLimitCharacters: null,
       note: provider === 'ollama'
-        ? 'Estimativa aproximada do contexto local; o consumo não usa créditos da Groq.'
-        : 'Estimativa aproximada; o tokenizador e o limite disponível da Groq podem variar.',
+        ? 'Estimativa aproximada do contexto local completo; o consumo não usa créditos da Groq.'
+        : 'Estimativa aproximada do contexto completo; a Groq pode recusar a chamada se o limite de tokens for excedido.',
     });
   } catch (error) {
     return next(error);

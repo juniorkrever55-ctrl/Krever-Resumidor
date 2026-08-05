@@ -45,7 +45,7 @@ Em uma conversa selecionada, o botão **Buscar 50 anteriores** pede ao WhatsApp 
 - **Qualquer áudio recebido:** é guardado localmente em `data/audio/` para aparecer com player no painel. Isso não chama a Groq. Na conversa, clique em **Transcrever este áudio** somente nos áudios que desejar enviar à IA.
 - **Imagens de simulação:** são guardadas em `data/images/`, aparecem como prévia na conversa e não são enviadas automaticamente à IA.
 - **Transcrição/análise em lote:** ao clicar em **Gerar resumo da conversa**, o painel pergunta se deve transcrever todos os áudios e analisar todas as imagens locais pendentes. Confirmar envia os arquivos um a um para a Groq e consome uma requisição por áudio/imagem; cancelar gera o resumo somente com textos, transcrições e análises já existentes.
-- **Resumo:** só chama a Groq quando você clica em **Gerar resumo da conversa**. Para caber no limite padrão da Groq, cada chamada envia no máximo 12.000 caracteres da conversa, preservando o início e o fim quando for necessário compactar. O painel mostra uma estimativa de tokens de entrada, saída e total antes do resumo; é uma aproximação, pois o tokenizador real da Groq pode variar. Um novo clique faz uma nova chamada.
+- **Resumo:** só chama a IA quando você clica em **Gerar resumo da conversa** e envia o contexto completo, sem cortes automáticos. O painel mostra uma estimativa de tokens de entrada, saída e total antes do resumo; é uma aproximação, pois o tokenizador real pode variar. Provedores em nuvem podem recusar conversas que excedam seus próprios limites de contexto ou taxa. Um novo clique faz uma nova chamada.
 
 Para o modo manual funcionar, `STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION=true` deve permanecer no `.env` (é o padrão). Se definir `false`, o sistema não guardará os áudios, nem poderá reproduzi-los ou transcrevê-los depois. Para áudios recebidos antes desta atualização, faça **Refazer conexão / novo QR**: se o WhatsApp reenviar a mídia no histórico, o app a anexa à conversa existente sem duplicar os textos.
 
@@ -83,7 +83,7 @@ ollama pull llama3.2:3b
 ollama serve
 ```
 
-O modelo padrão local é `llama3.2:3b`, mais adequado para computadores com 8 GB de RAM e sem GPU dedicada potente. O app usa `http://127.0.0.1:11434` por padrão e aceita até 10.000 caracteres para o contexto local (`MAX_LOCAL_SUMMARY_CHARS`). A seleção vale para o **resumo de texto**. Transcrição de áudio e análise de imagens continuam na Groq até uma integração local específica para essas mídias.
+O modelo padrão local é `llama3.2:3b`, mais adequado para computadores com 8 GB de RAM e sem GPU dedicada potente. O app usa `http://127.0.0.1:11434` por padrão e envia o contexto completo da conversa, sem cortes automáticos. A seleção vale para o **resumo de texto**. Transcrição de áudio e análise de imagens continuam na Groq até uma integração local específica para essas mídias.
 
 Por padrão, `OLLAMA_KEEP_ALIVE=0` descarrega o modelo local ao terminar cada resumo, liberando RAM e encerrando o processo de execução do modelo após alguns instantes. Isso faz o próximo resumo demorar mais para carregar o modelo. Use `5m`, por exemplo, se preferir velocidade nas chamadas seguintes e tiver RAM disponível.
 
