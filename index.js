@@ -1499,6 +1499,8 @@ async function summarizeWithOllama(prompt, compactConversation) {
       body: JSON.stringify({
         model: OLLAMA_CHAT_MODEL,
         stream: false,
+        // Resumos não exigem raciocínio passo a passo; desativar reduz muito o tempo no Qwen3.
+        think: false,
         messages: [
           { role: 'system', content: prompt },
           { role: 'user', content: `Conversa para análise:\n\n${compactConversation}` },
