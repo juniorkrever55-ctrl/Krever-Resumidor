@@ -33,7 +33,11 @@ O QR não é enviado ao navegador como texto: o servidor transforma o token em i
 
 ## Nomes, números e pesquisa
 
-O painel usa os contatos e chats que o WhatsApp disponibiliza na sincronização para exibir nome e número, e a busca lateral aceita ambos. Não é feita busca externa pelo número: se um contato não tiver nome salvo/disponível no WhatsApp, o painel só poderá mostrar o identificador ou número recebido. Para atualizar nomes de conversas antigas, faça um novo pareamento pelo botão **Refazer conexão / novo QR** e aguarde a sincronização terminar.
+O painel usa os contatos e chats que o WhatsApp disponibiliza na sincronização para exibir nome e número, e a busca lateral aceita ambos. Não é feita busca externa pelo número: se um contato não tiver nome salvo/disponível no WhatsApp, o painel exibe **Cliente**, sem usar seu próprio nome ou identificadores técnicos como nome do contato. Para atualizar nomes de conversas antigas, faça um novo pareamento pelo botão **Refazer conexão / novo QR** e aguarde a sincronização terminar.
+
+## Exportar conversa em TXT
+
+Depois de selecionar uma conversa, use **Exportar TXT**. O download contém todo o histórico local, incluindo transcrições de áudio e análises de imagem já realizadas. O arquivo é nomeado com o nome do contato quando disponível; caso contrário, usa `cliente-AAAA-MM-DD.txt`. Nenhuma chamada de IA é feita para exportar.
 
 ## Histórico e uso da IA
 
@@ -66,6 +70,7 @@ Não existe uma API confiável para comparar toda a conta e descobrir retroativa
 - `GET /api/whatsapp/status` — estado da conexão e QR temporário.
 - `POST /api/whatsapp/reset` — remove a sessão local e reinicia o pareamento.
 - `GET /api/conversations` — conversas capturadas.
+- `GET /api/conversations/:id/export.txt` — baixa o histórico local completo em TXT.
 - `POST /api/conversations/:id/history` — pede uma página de até 50 mensagens mais antigas ao WhatsApp.
 - `GET /api/conversations/:id/audio/pending` — quantidade de áudios disponíveis para transcrição em lote.
 - `POST /api/conversations/:id/audio/transcribe-all` — inicia a transcrição manual em lote.

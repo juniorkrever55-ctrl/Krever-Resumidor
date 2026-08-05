@@ -85,6 +85,7 @@ let processedMessageIdsDirty = false;
 let processedMessageIdsWriteTimer = null;
 let contactsCache = null;
 let contactsWriteTimer = null;
+let ownDisplayName = '';
 const pendingTranscriptions = new Map();
 const onDemandHistoryRequestAt = new Map();
 const bulkTranscriptionJobs = new Map();
@@ -151,6 +152,16 @@ function isTechnicalWhatsAppIdentifier(value) {
   return /^\d{14,}(?::\d+)?$/.test(String(value || '').trim());
 }
 
+function normalizeNameForComparison(name) {
+  return String(name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
+
+function isOwnDisplayName(name) {
+  const candidate = normalizeNameForComparison(name);
+  const own = normalizeNameForComparison(ownDisplayName);
+  return Boolean(candidate && own && candidate === own);
+}
+
 function loadContacts() {
   if (contactsCache) return contactsCache;
   const saved = readJson(CONTACTS_FILE, { contacts: {} });
@@ -180,8 +191,10 @@ function knownContactFor(jid) {
 
 function knownNameFor(jid, pushName) {
   const savedName = knownContactFor(jid)?.name;
-  if (savedName) return savedName;
-  if (pushName && String(pushName).trim()) return String(pushName).trim().slice(0, 100);
+  if (savedName && !isOwnDisplayName(savedName)) return savedName;
+  const receivedName = pushName && String(pushName).trim() ? String(pushName).trim().slice(0, 100) : '';
+  // Em alguns históricos o WhatsApp associa o próprio push name ao contato remoto.
+  if (receivedName && !isOwnDisplayName(receivedName)) return receivedName;
   return '';
 }
 
@@ -190,8 +203,6 @@ function getDisplayName(jid, pushName) {
   if (knownName) return knownName;
   const localPart = jid.split('@')[0] || 'Conversa';
   if (jid.endsWith('@lid') || isTechnicalWhatsAppIdentifier(localPart)) return 'Cliente';
-  const phone = phoneFromJid(jid);
-  if (phone) return `+${phone}`;
   return jid.endsWith('@g.us') ? `Grupo ${localPart}` : 'Cliente';
 }
 
@@ -299,9 +310,9 @@ function markMessageAsProcessed(messageId) {
 }
 
 function toPublicConversation(conversation) {
-  const name = isTechnicalWhatsAppIdentifier(conversation.name)
-    ? (conversation.phone ? `+${conversation.phone}` : 'Contato sem nome')
-    : (conversation.name || 'Contato sem nome');
+  const name = isTechnicalWhatsAppIdentifier(conversation.name) || isOwnDisplayName(conversation.name)
+    ? 'Cliente'
+    : (conversation.name || 'Cliente');
   return {
     id: conversation.id,
     name,
@@ -316,7 +327,7 @@ function toPublicConversation(conversation) {
 function getSummarySpeaker(entry) {
   if (entry.fromMe) return 'Você';
   const sender = String(entry.sender || '').trim();
-  return !sender || isTechnicalWhatsAppIdentifier(sender) ? 'Cliente' : sender;
+  return !sender || isTechnicalWhatsAppIdentifier(sender) || isOwnDisplayName(sender) ? 'Cliente' : sender;
 }
 
 function toPublicEntry(entry) {
@@ -324,6 +335,30 @@ function toPublicEntry(entry) {
     ...entry,
     sender: getSummarySpeaker(entry),
   };
+}
+
+function safeExportFileName(name) {
+  const safe = String(name || 'cliente')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+  return safe || 'cliente';
+}
+
+function buildConversationExport(conversation) {
+  const publicConversation = toPublicConversation(conversation);
+  const entries = readAllConversationEntries(conversation.id);
+  const heading = [
+    `CONVERSA: ${publicConversation.name}`,
+    publicConversation.phone ? `NÚMERO: +${publicConversation.phone}` : null,
+    `EXPORTADO EM: ${new Date().toLocaleString('pt-BR')}`,
+    '',
+    '=== HISTÓRICO ===',
+    '',
+  ].filter((line) => line !== null).join('\n');
+  const messages = entries.map((entry) => `[${entry.timestamp}] ${getSummarySpeaker(entry)}: ${entry.text}`).join('\n\n');
+  return `${heading}${messages ? `\n${messages}` : '\nNenhuma mensagem registrada.'}\n`;
 }
 
 function appendConversationEntry({ jid, pushName, fromMe, sender, type, text, timestamp, audio, image, sourceMessageId }) {
@@ -1295,6 +1330,7 @@ async function connectWhatsApp() {
   try {
     ensureDirectories();
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    ownDisplayName = state.creds.me?.name || ownDisplayName;
     let version;
     try {
       ({ version } = await fetchLatestBaileysVersion());
@@ -1322,7 +1358,10 @@ async function connectWhatsApp() {
     });
     activeSocket = socket;
 
-    socket.ev.on('creds.update', saveCreds);
+    socket.ev.on('creds.update', (update) => {
+      if (update.me?.name) ownDisplayName = update.me.name;
+      saveCreds(update);
+    });
     socket.ev.on('contacts.upsert', rememberContacts);
     socket.ev.on('contacts.update', rememberContacts);
     socket.ev.on('chats.upsert', rememberContacts);
@@ -1346,6 +1385,7 @@ async function connectWhatsApp() {
       }
 
       if (update.connection === 'open') {
+        if (socket.user?.name) ownDisplayName = socket.user.name;
         setConnectionStatus('connected', {
           qrImage: null,
           qrUpdatedAt: null,
@@ -1645,6 +1685,20 @@ app.get('/api/conversations/:id', (req, res) => {
   const conversation = index.conversations[id];
   if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
   return res.json({ conversation: toPublicConversation(conversation), entries: loadConversationEntries(id, req.query.limit).map(toPublicEntry) });
+});
+
+app.get('/api/conversations/:id/export.txt', (req, res) => {
+  const conversation = loadConversationIndex().conversations[req.params.id];
+  if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
+
+  const date = new Date().toISOString().slice(0, 10);
+  const fileName = `${safeExportFileName(toPublicConversation(conversation).name)}-${date}.txt`;
+  res.set({
+    'Content-Type': 'text/plain; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${fileName}"`,
+    'Cache-Control': 'no-store',
+  });
+  return res.send(buildConversationExport(conversation));
 });
 
 app.post('/api/conversations/:id/history', async (req, res, next) => {

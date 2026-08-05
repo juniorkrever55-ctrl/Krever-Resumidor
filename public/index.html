@@ -126,6 +126,7 @@
         <div class="main-heading">
           <div><h2 id="conversation-title">Selecione uma conversa</h2><p id="conversation-info">As novas mensagens aparecem aqui depois da conexão.</p></div>
           <div class="conversation-actions">
+            <button class="button secondary" type="button" id="export-txt-button" disabled>Exportar TXT</button>
             <button class="button secondary" type="button" id="transcribe-all-button" disabled>Transcrever todos os áudios</button>
             <button class="button secondary" type="button" id="older-history-button" disabled>Buscar 50 anteriores</button>
           </div>
@@ -178,7 +179,7 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
       qrImage: document.getElementById('qr-image'), qrPlaceholder: document.getElementById('qr-placeholder'),
       groqWarning: document.getElementById('groq-warning'), resetButton: document.getElementById('reset-button'), newAccountButton: document.getElementById('new-account-button'),
       conversationList: document.getElementById('conversation-list'), conversationSearch: document.getElementById('conversation-search'), conversationTitle: document.getElementById('conversation-title'),
-      conversationInfo: document.getElementById('conversation-info'), transcribeAllButton: document.getElementById('transcribe-all-button'), olderHistoryButton: document.getElementById('older-history-button'), entries: document.getElementById('entries'),
+      conversationInfo: document.getElementById('conversation-info'), exportTxtButton: document.getElementById('export-txt-button'), transcribeAllButton: document.getElementById('transcribe-all-button'), olderHistoryButton: document.getElementById('older-history-button'), entries: document.getElementById('entries'),
       summarizeButton: document.getElementById('summarize-button'), tokenEstimateButton: document.getElementById('token-estimate-button'), tokenEstimate: document.getElementById('token-estimate'), copySummaryButton: document.getElementById('copy-summary-button'), summaryHint: document.getElementById('summary-hint'),
       summaryOutput: document.getElementById('summary-output'), instructions: document.getElementById('instructions'), aiProvider: document.getElementById('ai-provider'), providerNote: document.getElementById('provider-note'),
       manualText: document.getElementById('manual-text'), manualOutput: document.getElementById('manual-output'), manualButton: document.getElementById('manual-button'),
@@ -368,6 +369,7 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
         elements.conversationInfo.textContent = `${data.conversation.messageCount} mensagem(ns) registrada(s) · ${data.conversation.isGroup ? 'grupo' : 'conversa individual'}`;
         elements.summarizeButton.disabled = false;
         elements.tokenEstimateButton.disabled = false;
+        elements.exportTxtButton.disabled = false;
         elements.transcribeAllButton.disabled = false;
         elements.olderHistoryButton.disabled = false;
         elements.summaryHint.textContent = 'A IA receberá as mensagens registradas desta conversa.';
@@ -417,6 +419,16 @@ Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente i
 
     function wait(milliseconds) {
       return new Promise((resolve) => setTimeout(resolve, milliseconds));
+    }
+
+    function exportConversationTxt() {
+      if (!state.selectedConversationId) return;
+      const link = document.createElement('a');
+      link.href = `/api/conversations/${encodeURIComponent(state.selectedConversationId)}/export.txt`;
+      link.download = '';
+      document.body.append(link);
+      link.click();
+      link.remove();
     }
 
     async function transcribeAllAudios() {
@@ -558,6 +570,7 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
           elements.entries.textContent = 'Histórico local apagado. Aguarde a sincronização da nova conta.';
           elements.summarizeButton.disabled = true;
           elements.tokenEstimateButton.disabled = true;
+          elements.exportTxtButton.disabled = true;
           elements.transcribeAllButton.disabled = true;
           elements.tokenEstimate.textContent = 'Selecione uma conversa para estimar o uso de tokens.';
           elements.copySummaryButton.disabled = true;
@@ -597,6 +610,7 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
     }
 
     elements.summarizeButton.addEventListener('click', summarizeConversation);
+    elements.exportTxtButton.addEventListener('click', exportConversationTxt);
     elements.transcribeAllButton.addEventListener('click', transcribeAllAudios);
     elements.tokenEstimateButton.addEventListener('click', updateTokenEstimate);
     elements.copySummaryButton.addEventListener('click', copySummary);
