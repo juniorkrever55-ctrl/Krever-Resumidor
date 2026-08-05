@@ -25,6 +25,7 @@ const DATA_DIR = path.join(ROOT_DIR, 'data');
 const CONVERSATIONS_DIR = path.join(DATA_DIR, 'conversations');
 const AUDIO_DIR = path.join(DATA_DIR, 'audio');
 const IMAGE_DIR = path.join(DATA_DIR, 'images');
+const AI_REQUESTS_DIR = path.join(DATA_DIR, 'ai-requests');
 const CONVERSATIONS_INDEX_FILE = path.join(DATA_DIR, 'conversations.json');
 const PROCESSED_MESSAGE_IDS_FILE = path.join(DATA_DIR, 'processed-message-ids.json');
 const CONTACTS_FILE = path.join(DATA_DIR, 'contacts.json');
@@ -36,9 +37,11 @@ const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || 'qwen/qwen3.6-27b';
 const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
 // Modelo menor sem modo de raciocínio exposto; mais adequado para computadores com 8 GB de RAM.
 const OLLAMA_CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL || 'llama3.2:3b';
+const OLLAMA_KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || '0';
 // Para transcrever sob demanda, o áudio precisa ficar salvo somente neste computador.
 const STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION = process.env.STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION !== 'false';
 const STORE_IMAGES_FOR_SUMMARY = process.env.STORE_IMAGES_FOR_SUMMARY !== 'false';
+const SAVE_AI_REQUESTS = process.env.SAVE_AI_REQUESTS !== 'false';
 const WHATSAPP_LOG_LEVEL = process.env.DEBUG_WHATSAPP === 'true' ? 'info' : 'silent';
 // O histórico é importado localmente; não chama IA.
 const IMPORT_HISTORY = process.env.IMPORT_HISTORY !== 'false';
@@ -48,7 +51,7 @@ const MAX_AUDIO_BYTES = Number(process.env.MAX_AUDIO_BYTES || 24 * 1024 * 1024);
 const MAX_SUMMARY_CHARS = Math.min(Number(process.env.MAX_SUMMARY_CHARS || 12000), 12000);
 const MAX_SUBMITTED_SUMMARY_CHARS = Number(process.env.MAX_SUBMITTED_SUMMARY_CHARS || 1000000);
 const MAX_LOCAL_SUMMARY_CHARS = Number(process.env.MAX_LOCAL_SUMMARY_CHARS || 40000);
-const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 16384);
+const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 4096);
 const ON_DEMAND_HISTORY_PAGE_SIZE = 50;
 const BULK_TRANSCRIPTION_DELAY_MS = 1200;
 const BULK_TRANSCRIPTION_MAX_ATTEMPTS = 3;
@@ -99,6 +102,7 @@ function ensureDirectories() {
   fs.mkdirSync(CONVERSATIONS_DIR, { recursive: true });
   if (STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION) fs.mkdirSync(AUDIO_DIR, { recursive: true });
   if (STORE_IMAGES_FOR_SUMMARY) fs.mkdirSync(IMAGE_DIR, { recursive: true });
+  if (SAVE_AI_REQUESTS) fs.mkdirSync(AI_REQUESTS_DIR, { recursive: true });
 }
 
 function clearLocalConversationHistory() {
@@ -1502,6 +1506,8 @@ async function summarizeWithOllama(prompt, compactConversation) {
         stream: false,
         // Resumos não exigem raciocínio passo a passo; desativar reduz muito o tempo no Qwen3.
         think: false,
+        // 0 descarrega o modelo ao fim da resposta para liberar RAM/llama-server.exe.
+        keep_alive: OLLAMA_KEEP_ALIVE,
         messages: [
           { role: 'system', content: prompt },
           { role: 'user', content: `Conversa para análise:\n\n${compactConversation}` },
@@ -1531,11 +1537,40 @@ async function summarizeWithOllama(prompt, compactConversation) {
   return result;
 }
 
+function saveAiRequestLog({ provider, prompt, originalConversation, compactConversation }) {
+  if (!SAVE_AI_REQUESTS) return null;
+  try {
+    fs.mkdirSync(AI_REQUESTS_DIR, { recursive: true });
+    const timestamp = new Date().toISOString();
+    const model = provider === 'ollama' ? OLLAMA_CHAT_MODEL : GROQ_CHAT_MODEL;
+    const fileName = `${timestamp.replace(/[:.]/g, '-')}-${provider}-${crypto.randomUUID().slice(0, 8)}.txt`;
+    const content = `DATA: ${timestamp}
+PROVEDOR: ${provider}
+MODELO: ${model}
+CARACTERES ORIGINAIS: ${originalConversation.length}
+CARACTERES ENVIADOS: ${compactConversation.length}
+CONTEXTO COMPACTADO: ${originalConversation.length > compactConversation.length ? 'sim' : 'não'}
+
+=== INSTRUÇÕES ENVIADAS ===
+${prompt}
+
+=== CONVERSA ENVIADA À IA ===
+${compactConversation}
+`;
+    fs.writeFileSync(path.join(AI_REQUESTS_DIR, fileName), content, { mode: 0o600 });
+    return fileName;
+  } catch (error) {
+    console.warn(`Não foi possível salvar o arquivo de auditoria da IA: ${error.message}`);
+    return null;
+  }
+}
+
 async function summarize(text, instructions, provider) {
   const selectedProvider = normalizeSummaryProvider(provider);
   const conversation = validateText(text, 'A conversa', MAX_SUBMITTED_SUMMARY_CHARS);
   const compactConversation = trimTranscriptForProvider(conversation, selectedProvider);
   const prompt = getSummaryPrompt(instructions);
+  saveAiRequestLog({ provider: selectedProvider, prompt, originalConversation: conversation, compactConversation });
 
   if (selectedProvider === 'ollama') {
     return summarizeWithOllama(prompt, compactConversation);

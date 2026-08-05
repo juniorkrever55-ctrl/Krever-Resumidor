@@ -85,4 +85,10 @@ ollama serve
 
 O modelo padrão local é `llama3.2:3b`, mais adequado para computadores com 8 GB de RAM e sem GPU dedicada potente. O app usa `http://127.0.0.1:11434` por padrão e aceita até 10.000 caracteres para o contexto local (`MAX_LOCAL_SUMMARY_CHARS`). A seleção vale para o **resumo de texto**. Transcrição de áudio e análise de imagens continuam na Groq até uma integração local específica para essas mídias.
 
+Por padrão, `OLLAMA_KEEP_ALIVE=0` descarrega o modelo local ao terminar cada resumo, liberando RAM e encerrando o processo de execução do modelo após alguns instantes. Isso faz o próximo resumo demorar mais para carregar o modelo. Use `5m`, por exemplo, se preferir velocidade nas chamadas seguintes e tiver RAM disponível.
+
+## Arquivos enviados para a IA
+
+Com `SAVE_AI_REQUESTS=true`, cada resumo cria um arquivo `.txt` em `data/ai-requests/` contendo o provedor, modelo, instruções e o trecho exato da conversa enviado para a IA. A chave da API nunca é incluída. Esses arquivos têm dados sensíveis e ficam fora do Git; defina `SAVE_AI_REQUESTS=false` se não quiser guardá-los.
+
 A chave da Groq permanece exclusivamente no servidor; o navegador usa apenas essas rotas locais.
