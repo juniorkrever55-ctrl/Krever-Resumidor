@@ -70,12 +70,15 @@ async function checkWhatsAppTab() {
       const res = await chrome.tabs.sendMessage(tabs[0].id, { type: 'PING' });
       if (res?.ok) {
         els.statusDot.className = 'dot connected';
-        els.statusText.textContent = `Conectado: ${res.chat} (${res.messages} msgs)`;
+        const audioInfo = res.audios ? ` • ${res.audios} áudios` : '';
+        const imgInfo = res.images ? ` • ${res.images} imgs` : '';
+        els.statusText.textContent = `Conectado: ${res.chat} (${res.messages} msgs${audioInfo}${imgInfo})`;
         return tabs[0];
       }
-    } catch {
+    } catch (err) {
+      console.warn('Ping falhou', err);
       els.statusDot.className = 'dot';
-      els.statusText.textContent = 'WhatsApp aberto, mas recarregue a página';
+      els.statusText.textContent = 'WhatsApp aberto, mas recarregue a página (F5)';
     }
     return tabs[0];
   } catch (e) {
@@ -139,40 +142,71 @@ function renderEntries(entries) {
     return;
   }
 
-  // Mostra últimas 100
-  const toShow = entries.slice(-100);
+  // Mostra últimas 120 para ter mais contexto
+  const toShow = entries.slice(-120);
   toShow.forEach(entry => {
     const div = document.createElement('div');
-    div.className = `message ${entry.fromMe ? 'own' : ''}`;
+    div.className = `message ${entry.fromMe ? 'own' : ''} ${entry.type}`;
     
     const meta = document.createElement('div');
     meta.className = 'message-meta';
     const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
     meta.textContent = `${entry.fromMe ? 'Você' : entry.sender} • ${time}`;
     
-    const text = document.createElement('div');
-    text.className = 'message-text';
-    text.textContent = entry.text;
-
     div.appendChild(meta);
 
     if (entry.type === 'audio') {
       const label = document.createElement('div');
-      label.className = 'message-audio';
-      label.textContent = entry.audio?.transcriptionStatus === 'completed' ? '🎙️ Transcrito' : '🎙️ Áudio pendente';
+      const isDone = entry.audio?.transcriptionStatus === 'completed';
+      label.className = `message-audio ${isDone ? 'completed' : 'pending'}`;
+      label.textContent = isDone ? 'Áudio transcrito' : 'Áudio • clique em Transcrever';
       div.appendChild(label);
-    }
-    if (entry.type === 'image') {
+      // Se já transcrito, mostra transcrição no texto, senão mostra placeholder
+      if (isDone && entry.text && entry.text.includes('[Áudio transcrito]')) {
+        const text = document.createElement('div');
+        text.className = 'message-text';
+        text.textContent = entry.text;
+        div.appendChild(text);
+      } else {
+        const text = document.createElement('div');
+        text.className = 'message-text';
+        text.style.fontStyle = 'italic';
+        text.style.opacity = '0.8';
+        text.textContent = entry.audio?.seconds ? `🎧 Áudio de ${entry.audio.seconds}s - pendente` : '🎧 Áudio pendente de transcrição';
+        div.appendChild(text);
+      }
+    } else if (entry.type === 'image') {
       const label = document.createElement('div');
-      label.className = 'message-image';
-      label.textContent = entry.image?.analysisStatus === 'completed' ? '🖼️ Analisada' : '🖼️ Imagem pendente';
+      const isDone = entry.image?.analysisStatus === 'completed';
+      label.className = `message-image ${isDone ? 'completed' : 'pending'}`;
+      label.textContent = isDone ? 'Imagem analisada' : 'Imagem • será analisada no resumo';
       div.appendChild(label);
+      
+      const text = document.createElement('div');
+      text.className = 'message-text';
+      text.textContent = entry.text || '[Imagem]';
+      div.appendChild(text);
+    } else {
+      const text = document.createElement('div');
+      text.className = 'message-text';
+      text.textContent = entry.text;
+      div.appendChild(text);
     }
 
-    div.appendChild(text);
     els.currentEntries.appendChild(div);
   });
   els.currentEntries.scrollTop = els.currentEntries.scrollHeight;
+
+  // Atualiza info com contagem de áudios/imagens
+  const audioCount = entries.filter(e => e.type === 'audio').length;
+  const imageCount = entries.filter(e => e.type === 'image').length;
+  const textCount = entries.filter(e => e.type === 'text').length;
+  if (els.currentInfo) {
+    const base = els.currentInfo.textContent.split('•')[0] || '';
+    if (audioCount > 0 || imageCount > 0) {
+      els.currentInfo.textContent = `${entries.length} msgs: ${textCount} texto, ${audioCount} áudio, ${imageCount} imagem • ${currentConversationName}`;
+    }
+  }
 }
 
 function setButtonsDisabled(disabled) {
@@ -201,21 +235,39 @@ async function scrollForHistory() {
 
 async function transcribeAll() {
   if (!currentEntries.length) return;
-  const audios = currentEntries.filter(e => e.type === 'audio' && e.audio?.transcriptionStatus !== 'completed');
-  if (!audios.length) return alert('Nenhum áudio pendente');
+  // Considera pendentes e também os que ainda estão com status pending (mesmo que não completed)
+  const audios = currentEntries.filter(e => e.type === 'audio');
+  const pending = audios.filter(e => e.audio?.transcriptionStatus !== 'completed');
+  
+  console.log('[Krever Popup] Total entries:', currentEntries.length, 'audios:', audios.length, 'pending:', pending.length);
+  
+  if (!audios.length) {
+    return alert(`Nenhum áudio detectado nesta conversa!\n\nTotal de mensagens: ${currentEntries.length}\nTipos: ${[...new Set(currentEntries.map(e=>e.type))].join(', ')}\n\nDica: Recarregue o WhatsApp Web (F5) e tente novamente. Se o bug persistir, abra o console (F12) e veja logs [Krever].`);
+  }
+  if (!pending.length) {
+    return alert(`Todos os ${audios.length} áudio(s) já foram transcritos!`);
+  }
 
-  if (!confirm(`Transcrever ${audios.length} áudio(s)? Isso consome créditos da Groq.`)) return;
+  if (!confirm(`Transcrever ${pending.length} áudio(s) pendente(s) de ${audios.length} total?\n\nIsso consome créditos da Groq.\n\nDICA: No WhatsApp Web, dê play em um áudio antes para garantir que o blob carregou.`)) return;
 
   els.btnTranscribeAll.disabled = true;
-  els.btnTranscribeAll.textContent = `⏳ 0/${audios.length}`;
+  els.btnTranscribeAll.textContent = `⏳ 0/${pending.length}`;
 
   const tab = await checkWhatsAppTab();
-  let success = 0, fail = 0;
+  if (!tab) {
+    els.btnTranscribeAll.disabled = false;
+    els.btnTranscribeAll.textContent = '🎙️ Transcrever áudios';
+    return alert('WhatsApp Web não encontrado');
+  }
 
-  for (let i = 0; i < audios.length; i++) {
-    const entry = audios[i];
-    els.btnTranscribeAll.textContent = `⏳ ${i+1}/${audios.length}`;
+  let success = 0, fail = 0;
+  let failReasons = [];
+
+  for (let i = 0; i < pending.length; i++) {
+    const entry = pending[i];
+    els.btnTranscribeAll.textContent = `⏳ ${i+1}/${pending.length}`;
     try {
+      console.log(`[Krever] Tentando pegar blob do áudio ${entry.sourceId}`);
       const blobRes = await chrome.tabs.sendMessage(tab.id, { type: 'GET_AUDIO_BLOB', messageId: entry.sourceId });
       if (!blobRes?.success) throw new Error(blobRes?.error || 'Blob não encontrado');
 
@@ -228,21 +280,35 @@ async function transcribeAll() {
         messageId: entry.sourceId
       });
 
-      if (res.success) success++;
-      else fail++;
+      if (res.success) {
+        success++;
+        // Atualiza entry local
+        entry.audio.transcriptionStatus = 'completed';
+        entry.text = res.result.text;
+      } else {
+        fail++;
+        failReasons.push(res.error);
+      }
 
     } catch (e) {
       console.warn('Erro transcrição', e);
       fail++;
+      failReasons.push(e.message);
     }
-    // delay para não tomar rate limit
-    await new Promise(r => setTimeout(r, 1200));
+    await new Promise(r => setTimeout(r, 1300));
   }
 
   els.btnTranscribeAll.disabled = false;
   els.btnTranscribeAll.textContent = '🎙️ Transcrever áudios';
-  alert(`Transcrição concluída: ${success} sucesso, ${fail} falha`);
-  loadCurrentChat();
+  
+  let msg = `Transcrição: ${success} sucesso, ${fail} falha`;
+  if (fail > 0) {
+    msg += `\n\nFalhas: ${failReasons.slice(0,3).join('; ')}`;
+    msg += `\n\nDica: No WhatsApp Web, clique no play de um áudio para carregar o blob, depois tente novamente.`;
+  }
+  alert(msg);
+  await loadCurrentChat();
+  renderEntries(currentEntries);
 }
 
 async function analyzeAll() {

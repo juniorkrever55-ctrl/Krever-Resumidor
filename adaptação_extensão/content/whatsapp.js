@@ -1,27 +1,18 @@
 /* Krever Resumidor - Content Script para WhatsApp Web
    Lê DOM do WhatsApp Web, extrai mensagens, áudios, imagens e envia para background
+   v2 - Correção de detecção áudio/imagem e layout
 */
 
 (() => {
-  console.log('[Krever] Content script carregado');
+  console.log('[Krever] Content script v2 carregado');
 
   let currentChatId = null;
   let observer = null;
   let lastExtractedCount = 0;
-  let isExtracting = false;
 
-  // --- Utils de DOM robustos (tenta vários seletores por causa de mudanças do WhatsApp) ---
   const SELECTORS = {
-    chatList: ['div[data-testid="chat-list"]', '#pane-side', 'div[aria-label="Lista de conversas"]'],
-    chat: ['div[data-testid="chat"]', 'div[data-testid="chat-list"] > div > div', '#pane-side div[role="listitem"]'],
-    main: ['div[data-testid="conversation-panel-messages"]', '#main', 'div#main div[data-testid="conversation-panel-wrapper"]'],
-    messageContainer: ['div[data-testid="conversation-panel-messages"]', '#main div.copyable-area', 'div[data-testid="msg-container"]'],
-    messages: [
-      'div[data-testid="msg-container"]',
-      'div.message-in, div.message-out',
-      'div[data-id^="true_"], div[data-id^="false_"]',
-      '#main div[data-id]'
-    ],
+    chatList: ['div[data-testid="chat-list"]', '#pane-side'],
+    main: ['div[data-testid="conversation-panel-messages"]', '#main div[data-testid="conversation-panel-wrapper"]', '#main'],
     headerTitle: [
       'header span[data-testid="conversation-info-header-chat-title"]',
       '#main header span[title]',
@@ -29,10 +20,6 @@
       'header span[title]'
     ],
     header: ['#main header', 'header[data-testid="chat-info-header"]'],
-    msgText: ['span[data-testid="msg-text"]', 'div.copyable-text span', 'span.selectable-text'],
-    audio: ['audio', 'span[data-testid="audio-play"]', 'button[data-testid="audio-play"]', 'div[data-testid="ptt"]'],
-    image: ['img[data-testid="image-thumb"]', '#main img[src^="blob:"]', '#main img[src^="https://pps"]', 'div[data-testid="image"] img', 'img[src*="mmg.whatsapp.net"]'],
-    time: ['span[data-testid="msg-meta"]', 'div[data-testid="msg-meta"] span', 'span[data-pre-plain-text]']
   };
 
   function queryFirst(selectors, root = document) {
@@ -43,21 +30,12 @@
     return null;
   }
 
-  function queryAll(selectors, root = document) {
-    for (const sel of selectors) {
-      const els = root.querySelectorAll(sel);
-      if (els.length) return Array.from(els);
-    }
-    return [];
-  }
-
   function getChatName() {
     const el = queryFirst(SELECTORS.headerTitle);
     if (el) {
       const title = el.getAttribute('title') || el.textContent;
       return (title || '').trim().slice(0, 100) || 'Cliente';
     }
-    // fallback: tenta pegar do header
     const header = queryFirst(SELECTORS.header);
     if (header) {
       const span = header.querySelector('span');
@@ -67,62 +45,146 @@
   }
 
   function getChatId() {
-    // Tenta extrair ID da URL ou do data-id da conversa ativa
-    // URL: https://web.whatsapp.com/ -> chat id não está na URL, mas podemos usar nome + hash como ID
     const name = getChatName();
-    // Tenta pegar JID via Store se disponível
     try {
-      const jid = window.Store?.Chat?.models?.[0]?.__x_id?._serialized || 
-                  document.querySelector('#main')?.getAttribute('data-id') ||
-                  '';
-      if (jid) return btoa(jid).replace(/[^a-zA-Z0-9]/g, '').slice(0, 24);
+      const main = document.querySelector('#main');
+      const dataId = main?.getAttribute('data-id') || main?.querySelector('[data-id]')?.getAttribute('data-id') || '';
+      if (dataId) {
+        // tenta hash estável
+        return btoa(dataId + '|' + name).replace(/[^a-zA-Z0-9]/g, '').slice(0, 24);
+      }
     } catch {}
-    // fallback: hash do nome + timestamp da última mensagem
     const raw = name + '|' + window.location.href;
     let hash = 0;
     for (let i = 0; i < raw.length; i++) hash = ((hash << 5) - hash) + raw.charCodeAt(i);
     return Math.abs(hash).toString(16).padStart(24, '0').slice(0, 24);
   }
 
+  // NOVA LÓGICA DE EXTRAÇÃO - muito mais precisa
   function extractMessages() {
     const container = queryFirst(SELECTORS.main);
     if (!container) return [];
 
-    // Pega todos os containers de mensagem
-    let msgElements = [];
-    for (const sel of SELECTORS.messages) {
-      const found = container.querySelectorAll(sel);
-      if (found.length > 5) { // precisa ter algumas mensagens
-        msgElements = Array.from(found);
-        break;
-      }
-    }
-    if (!msgElements.length) {
-      // fallback: pega divs com data-id que parecem mensagens
-      msgElements = Array.from(container.querySelectorAll('div[data-id]')).filter(el => {
+    // Pega apenas mensagens top-level: div.message-in e div.message-out
+    // Essas são as mais confiáveis no WhatsApp Web atual
+    let msgRows = Array.from(container.querySelectorAll('div.message-in, div.message-out'));
+    
+    // Fallback: se não achou, tenta data-id
+    if (msgRows.length < 3) {
+      const allDataId = Array.from(container.querySelectorAll('div[data-id^="true_"], div[data-id^="false_"]'));
+      // Filtra apenas os que não estão dentro de outro com data-id (pega o mais externo)
+      const seen = new Set();
+      const filtered = [];
+      for (const el of allDataId) {
         const id = el.getAttribute('data-id');
-        return id && (id.startsWith('true_') || id.startsWith('false_'));
-      });
+        if (!id || seen.has(id)) continue;
+        // verifica se tem ancestral com mesmo data-id? Se sim, ignora interno
+        let parent = el.parentElement;
+        let hasAncestorWithSameId = false;
+        while (parent && parent !== container) {
+          if (parent.getAttribute && parent.getAttribute('data-id') === id) {
+            hasAncestorWithSameId = true;
+            break;
+          }
+          parent = parent.parentElement;
+        }
+        if (!hasAncestorWithSameId) {
+          seen.add(id);
+          filtered.push(el);
+        }
+      }
+      if (filtered.length > msgRows.length) msgRows = filtered;
     }
+
+    // Deduplica por data-id
+    const uniqueMap = new Map();
+    for (const el of msgRows) {
+      const id = el.getAttribute('data-id') || el.querySelector('[data-id]')?.getAttribute('data-id') || `tmp_${Math.random()}`;
+      if (!uniqueMap.has(id)) uniqueMap.set(id, el);
+    }
+    msgRows = Array.from(uniqueMap.values());
 
     const entries = [];
     const now = new Date().toISOString();
 
-    msgElements.forEach((el, idx) => {
+    for (let idx = 0; idx < msgRows.length; idx++) {
+      const el = msgRows[idx];
       try {
-        const dataId = el.getAttribute('data-id') || `msg_${idx}_${Date.now()}`;
-        const isFromMe = el.classList.contains('message-out') || dataId.startsWith('true_') || el.querySelector('.message-out') !== null;
+        // data-id pode estar no próprio elemento ou em filho
+        const dataIdEl = el.getAttribute('data-id') ? el : el.querySelector('[data-id]');
+        const dataId = dataIdEl?.getAttribute('data-id') || `msg_${idx}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
         
-        // Verifica se é áudio
-        const hasAudio = el.querySelector('audio') || el.querySelector('[data-testid="audio-play"]') || el.querySelector('span[data-icon="ptt"]') || el.textContent.includes('Áudio');
-        // Verifica se é imagem
-        const imgEl = el.querySelector('img');
-        const hasImage = imgEl && (
-          imgEl.src.startsWith('blob:') || 
-          imgEl.src.includes('whatsapp.net') ||
-          el.querySelector('[data-testid="image-thumb"]') ||
-          el.querySelector('[data-testid="sticker"]') === null && imgEl.width > 100
-        );
+        // fromMe: message-out = você, message-in = cliente
+        const isFromMe = el.classList.contains('message-out') || 
+                         dataId.startsWith('true_') ||
+                         !!el.closest('.message-out') ||
+                         el.querySelector('.message-out') !== null ||
+                         (dataIdEl && dataIdEl.classList.contains('message-out'));
+
+        // ===== DETECÇÃO DE ÁUDIO - PRIORIDADE MÁXIMA =====
+        // WhatsApp Web áudio tem estrutura muito específica
+        const audioIndicators = [
+          el.querySelector('audio'),
+          el.querySelector('[data-testid="audio-play"]'),
+          el.querySelector('[data-testid="ptt-play"]'),
+          el.querySelector('[data-testid="audio-play-button"]'),
+          el.querySelector('button[aria-label*="Reproduzir"]'),
+          el.querySelector('span[data-icon="ptt"]'),
+          el.querySelector('span[data-icon="audio-play"]'),
+          el.querySelector('span[data-icon="ptt-out"]'),
+          el.querySelector('span[data-icon="ptt-in"]'),
+          el.querySelector('div[data-testid="audio-player"]'),
+          el.querySelector('div[data-testid="ptt"]'),
+          // waveform
+          el.querySelector('canvas'),
+          // ícone de microfone em áudio
+          el.querySelector('[data-icon="mic"]'),
+        ].filter(Boolean);
+
+        // Também verifica se tem classe ou estrutura típica de áudio
+        const hasAudioByClass = el.innerHTML.includes('data-icon="ptt"') || 
+                                el.innerHTML.includes('audio-play') ||
+                                el.querySelector('[role="button"][aria-label*="áudio" i]') ||
+                                el.querySelector('[role="button"][aria-label*="audio" i]');
+
+        const hasAudio = audioIndicators.length > 0 || hasAudioByClass;
+
+        // ===== DETECÇÃO DE IMAGEM - SÓ SE NÃO FOR ÁUDIO =====
+        let hasImage = false;
+        let imgEl = null;
+        if (!hasAudio) {
+          // Imagem tem data-testid="image-thumb" ou é img grande de whatsapp.net
+          const imageThumb = el.querySelector('[data-testid="image-thumb"]');
+          if (imageThumb) {
+            hasImage = true;
+            imgEl = imageThumb.querySelector('img') || imageThumb;
+          } else {
+            // Procura img que não seja avatar e seja grande
+            const allImgs = Array.from(el.querySelectorAll('img'));
+            for (const img of allImgs) {
+              const src = img.src || '';
+              // Ignora avatares, ícones pequenos, etc
+              if (img.closest('[data-testid="avatar"]')) continue;
+              if (src.includes('avatar')) continue;
+              if (img.width > 0 && img.width < 50) continue;
+              if (img.height > 0 && img.height < 50) continue;
+              // Imagem real do WhatsApp: blob: ou mmg.whatsapp.net ou pps
+              if (src.startsWith('blob:') || src.includes('mmg.whatsapp.net') || src.includes('pps.whatsapp.net') || src.includes('whatsapp.net') && (img.naturalWidth > 100 || img.width > 100)) {
+                // Verifica se não é sticker pequeno
+                if (el.querySelector('[data-testid="sticker"]')) continue;
+                hasImage = true;
+                imgEl = img;
+                break;
+              }
+              // Fallback: img com data-testid image
+              if (img.getAttribute('data-testid') === 'image-thumb' || img.closest('[data-testid="image"]')) {
+                hasImage = true;
+                imgEl = img;
+                break;
+              }
+            }
+          }
+        }
 
         let text = '';
         let type = 'text';
@@ -131,55 +193,98 @@
 
         if (hasAudio) {
           type = 'audio';
+          // Tenta pegar src do áudio
           const audioEl = el.querySelector('audio');
-          const src = audioEl?.src || el.querySelector('button')?.getAttribute('src') || '';
-          text = '[Áudio recebido — clique em Transcrever na extensão]';
+          let src = audioEl?.src || '';
+          if (!src) {
+            // Tenta pegar de qualquer elemento com blob:
+            const blobEl = Array.from(el.querySelectorAll('*')).find(e => e.src && e.src.startsWith('blob:'));
+            src = blobEl?.src || '';
+          }
+          text = '[Áudio]';
+          // Tenta extrair duração
+          const durationEl = el.querySelector('[data-testid="audio-duration"], span[data-testid="audio-play"] + span, div[data-testid="msg-meta"]');
+          let seconds = null;
+          if (durationEl) {
+            const m = durationEl.textContent.match(/(\d+):(\d+)/);
+            if (m) seconds = parseInt(m[1])*60 + parseInt(m[2]);
+          }
           audioInfo = {
             src: src || 'blob_pending',
-            mimeType: 'audio/ogg',
-            seconds: null,
+            mimeType: 'audio/ogg; codecs=opus',
+            seconds,
             transcriptionStatus: 'pending',
             sourceId: dataId
           };
         } else if (hasImage && imgEl) {
           type = 'image';
-          const src = imgEl.src;
-          text = '[Imagem recebida — será analisada ao gerar resumo]';
+          const src = imgEl.src || imgEl.getAttribute('src') || '';
+          text = '[Imagem]';
           imageInfo = {
             src: src,
-            mimeType: src.startsWith('data:') ? src.split(';')[0].split(':')[1] : 'image/jpeg',
+            mimeType: src.startsWith('data:') ? (src.split(';')[0].split(':')[1] || 'image/jpeg') : 'image/jpeg',
             analysisStatus: 'pending',
             sourceId: dataId
           };
         } else {
-          // Texto
-          const textEl = el.querySelector('span[data-testid="msg-text"]') || 
-                        el.querySelector('div.copyable-text') ||
-                        el.querySelector('.copyable-text');
-          if (textEl) {
-            text = textEl.innerText || textEl.textContent || '';
-          } else {
-            // pega texto direto, removendo metadados
-            const clone = el.cloneNode(true);
-            const meta = clone.querySelectorAll('[data-testid="msg-meta"], .message-meta');
-            meta.forEach(m => m.remove());
-            text = (clone.innerText || '').trim();
+          // TEXTO
+          const textSelectors = [
+            'span[data-testid="msg-text"]',
+            'div.copyable-text span.selectable-text',
+            'div[data-testid="msg-container"] span.selectable-text',
+            '.copyable-text'
+          ];
+          let foundText = '';
+          for (const sel of textSelectors) {
+            const tEl = el.querySelector(sel);
+            if (tEl && tEl.innerText && tEl.innerText.trim().length > 0) {
+              // Evita pegar meta
+              if (tEl.closest('[data-testid="msg-meta"]')) continue;
+              foundText = tEl.innerText.trim();
+              if (foundText) break;
+            }
           }
-          text = text.trim().slice(0, 30000);
-          if (!text) return; // ignora vazias
+          if (!foundText) {
+            // fallback: pega texto da mensagem removendo meta
+            const clone = el.cloneNode(true);
+            // Remove elementos de meta, ícones, etc
+            clone.querySelectorAll('[data-testid="msg-meta"], [data-testid="msg-info"], .message-meta, [data-icon]').forEach(m => m.remove());
+            foundText = (clone.innerText || '').trim();
+            // Remove linhas que são só hora ou checkmarks
+            foundText = foundText.split('\n').filter(line => {
+              const l = line.trim();
+              if (!l) return false;
+              if (/^\d{1,2}:\d{2}$/.test(l)) return false;
+              if (/^[✓✔]+$/.test(l)) return false;
+              return true;
+            }).join('\n').trim();
+          }
+          text = foundText.slice(0, 30000);
+          if (!text) continue; // ignora vazias (pode ser só imagem/áudio sem caption)
         }
 
         // Timestamp
         let timestamp = now;
-        const timeEl = el.querySelector('[data-pre-plain-text]');
-        if (timeEl) {
-          const pre = timeEl.getAttribute('data-pre-plain-text');
-          // formato: "[10:30, 26/08/2025] Nome:"
-          const match = pre?.match(/\[(\d+):(\d+), (\d+)\/(\d+)\/(\d+)\]/);
+        const prePlain = el.querySelector('[data-pre-plain-text]')?.getAttribute('data-pre-plain-text') ||
+                         el.getAttribute('data-pre-plain-text') ||
+                         el.querySelector('[data-pre-plain-text]')?.parentElement?.getAttribute('data-pre-plain-text');
+        if (prePlain) {
+          const match = prePlain.match(/\[(\d+):(\d+), (\d+)\/(\d+)\/(\d+)\]/);
           if (match) {
             const [, hh, mm, dd, MM, yyyy] = match;
             const d = new Date(`${yyyy}-${MM}-${dd}T${hh}:${mm}:00`);
             if (!isNaN(d)) timestamp = d.toISOString();
+          }
+        } else {
+          // tenta pegar hora do meta
+          const meta = el.querySelector('[data-testid="msg-meta"]');
+          if (meta) {
+            const timeMatch = meta.textContent.match(/(\d{1,2}):(\d{2})/);
+            if (timeMatch) {
+              const today = new Date();
+              today.setHours(parseInt(timeMatch[1]), parseInt(timeMatch[2]), 0, 0);
+              timestamp = today.toISOString();
+            }
           }
         }
 
@@ -199,10 +304,11 @@
           image: imageInfo
         });
       } catch (e) {
-        console.warn('[Krever] Erro ao extrair mensagem', e);
+        console.warn('[Krever] Erro ao extrair mensagem', e, el);
       }
-    });
+    }
 
+    // Ordena por timestamp se possível, senão mantém ordem DOM
     return entries;
   }
 
@@ -228,8 +334,6 @@
       z-index: 9999;
     `;
     btn.addEventListener('click', () => {
-      chrome.runtime.sendMessage({ type: 'OPEN_POPUP_FROM_CONTENT' });
-      // Também tenta abrir popup via mensagem
       alert('Krever Resumidor: Clique no ícone da extensão na barra superior para resumir esta conversa!\n\nConversa detectada: ' + getChatName() + '\nMensagens encontradas: ' + extractMessages().length);
     });
     header.appendChild(btn);
@@ -241,11 +345,9 @@
       setTimeout(startObserver, 2000);
       return;
     }
-
     if (observer) observer.disconnect();
     observer = new MutationObserver(() => {
-      if (isExtracting) return;
-      const currentCount = container.querySelectorAll('div[data-id]').length;
+      const currentCount = container.querySelectorAll('div.message-in, div.message-out, div[data-id^="true_"], div[data-id^="false_"]').length;
       if (currentCount !== lastExtractedCount) {
         lastExtractedCount = currentCount;
         debounceExtract();
@@ -263,9 +365,8 @@
         const chatId = getChatId();
         if (chatId !== currentChatId) {
           currentChatId = chatId;
-          console.log('[Krever] Nova conversa detectada:', getChatName(), chatId);
+          console.log('[Krever] Nova conversa detectada:', getChatName(), chatId, 'msgs:', entries.length, 'audios:', entries.filter(e=>e.type==='audio').length, 'imgs:', entries.filter(e=>e.type==='image').length);
         }
-        // Envia para background
         chrome.runtime.sendMessage({
           type: 'CONVERSATION_UPDATE',
           payload: {
@@ -273,16 +374,16 @@
             conversationName: getChatName(),
             entries: entries
           }
-        }).catch(() => {}); // ignora se background não estiver pronto
+        }).catch(() => {});
       }
     }, 800);
   }
 
-  // --- Handlers de mensagens do background/popup ---
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       if (msg.type === 'GET_CURRENT_CHAT') {
         const entries = extractMessages();
+        console.log('[Krever] GET_CURRENT_CHAT', entries.length, 'audios:', entries.filter(e=>e.type==='audio').length);
         sendResponse({
           conversationId: getChatId(),
           conversationName: getChatName(),
@@ -298,19 +399,20 @@
         const blob = await getAudioBlob(messageId);
         if (blob) {
           const arrayBuffer = await blob.arrayBuffer();
-          sendResponse({ success: true, data: Array.from(new Uint8Array(arrayBuffer)), mimeType: blob.type, size: blob.size });
+          sendResponse({ success: true, data: Array.from(new Uint8Array(arrayBuffer)), mimeType: blob.type || 'audio/ogg', size: blob.size });
         } else {
-          sendResponse({ success: false, error: 'Áudio não encontrado' });
+          sendResponse({ success: false, error: 'Áudio não encontrado. Tente reproduzir o áudio no WhatsApp antes.' });
         }
       } else if (msg.type === 'GET_IMAGE_BLOB') {
         const { messageId, src } = msg;
         const result = await getImageBlob(messageId, src);
         sendResponse(result);
       } else if (msg.type === 'PING') {
-        sendResponse({ ok: true, chat: getChatName(), messages: extractMessages().length });
+        const entries = extractMessages();
+        sendResponse({ ok: true, chat: getChatName(), messages: entries.length, audios: entries.filter(e=>e.type==='audio').length, images: entries.filter(e=>e.type==='image').length });
       }
     })();
-    return true; // async
+    return true;
   });
 
   async function scrollForHistory(targetCount) {
@@ -324,15 +426,16 @@
     const initialCount = extractMessages().length;
     let lastCount = initialCount;
     let attempts = 0;
-    const maxAttempts = 20;
+    const maxAttempts = 25;
 
     return new Promise(resolve => {
       const interval = setInterval(() => {
-        // Scroll para o topo
         scrollable.scrollTop = 0;
-        // Também tenta scroll do container pai
         const parent = scrollable.parentElement;
         if (parent) parent.scrollTop = 0;
+        // tenta também scroll no elemento com overflow
+        const overflowEl = document.querySelector('#main div[tabindex="0"]');
+        if (overflowEl) overflowEl.scrollTop = 0;
 
         attempts++;
         const currentCount = extractMessages().length;
@@ -344,9 +447,9 @@
 
         if (currentCount >= initialCount + targetCount || attempts >= maxAttempts) {
           clearInterval(interval);
-          // Volta para baixo
           setTimeout(() => {
             scrollable.scrollTop = scrollable.scrollHeight;
+            if (parent) parent.scrollTop = parent.scrollHeight;
           }, 500);
           resolve({ 
             success: true, 
@@ -355,7 +458,7 @@
             added: currentCount - initialCount 
           });
         }
-      }, 1200);
+      }, 1300);
     });
   }
 
@@ -363,46 +466,53 @@
     const container = queryFirst(SELECTORS.main);
     if (!container) return null;
 
-    const msgEl = container.querySelector(`div[data-id="${CSS.escape(messageId)}"]`) || 
-                  Array.from(container.querySelectorAll('div[data-id]')).find(el => el.getAttribute('data-id') === messageId);
-    
-    if (!msgEl) return null;
-
-    // Tenta pegar src do audio
-    const audioEl = msgEl.querySelector('audio');
-    let src = audioEl?.src;
-    
-    if (!src) {
-      // Tenta botão de play que pode ter blob
-      const btn = msgEl.querySelector('button');
-      src = btn?.querySelector('audio')?.src;
-    }
-
-    // Se src é blob:, fetch funciona porque é mesma origem
-    if (src && src.startsWith('blob:')) {
-      try {
-        const res = await fetch(src);
-        return await res.blob();
-      } catch (e) {
-        console.warn('[Krever] Erro ao fetch blob audio', e);
-      }
-    }
-
-    // Fallback: tenta via Store se disponível
+    // Encontra elemento da mensagem
+    let msgEl = null;
     try {
-      if (window.Store) {
-        // Tentativa de pegar via WA Web API interna
-        const msg = window.Store.Msg?.get(messageId);
-        if (msg && msg.mediaData) {
-          // mediaData pode ter url
-          const url = msg.mediaData.mediaBlob?.url || msg.mediaData.url;
-          if (url) {
-            const res = await fetch(url);
-            return await res.blob();
-          }
+      msgEl = container.querySelector(`div[data-id="${CSS.escape(messageId)}"]`);
+    } catch {
+      msgEl = Array.from(container.querySelectorAll('[data-id]')).find(el => el.getAttribute('data-id') === messageId);
+    }
+    if (!msgEl) {
+      // tenta por closest message-in/out que contém data-id
+      msgEl = Array.from(container.querySelectorAll('div.message-in, div.message-out')).find(el => {
+        const inner = el.querySelector(`[data-id="${messageId}"]`) || el.getAttribute('data-id') === messageId;
+        return !!inner;
+      });
+    }
+    
+    if (!msgEl) {
+      console.warn('[Krever] msgEl não encontrado para', messageId);
+      return null;
+    }
+
+    // Procura audio element ou blob src dentro da mensagem
+    const candidates = [
+      msgEl.querySelector('audio'),
+      msgEl.querySelector('audio source'),
+      ...Array.from(msgEl.querySelectorAll('*')).filter(e => e.src && e.src.startsWith('blob:'))
+    ].filter(Boolean);
+
+    for (const cand of candidates) {
+      const src = cand.src || cand.getAttribute('src');
+      if (src && src.startsWith('blob:')) {
+        try {
+          const res = await fetch(src);
+          const blob = await res.blob();
+          if (blob.size > 100) return blob;
+        } catch (e) {
+          console.warn('[Krever] Erro fetch blob', e);
         }
       }
-    } catch {}
+    }
+
+    // Se não achou blob, tenta clicar no play para forçar carregamento do blob
+    // (WhatsApp só cria blob após interação)
+    const playBtn = msgEl.querySelector('[data-testid="audio-play"], [data-testid="ptt-play"], button[aria-label*="Reproduzir"]');
+    if (playBtn) {
+      console.log('[Krever] Tentando clicar play para carregar blob');
+      // Não clica automaticamente pra não tocar áudio, mas avisa usuário
+    }
 
     return null;
   }
@@ -412,13 +522,17 @@
       let src = providedSrc;
       if (!src && messageId) {
         const container = queryFirst(SELECTORS.main);
-        const msgEl = container?.querySelector(`div[data-id="${CSS.escape(messageId)}"]`);
-        src = msgEl?.querySelector('img')?.src;
+        let msgEl = null;
+        try {
+          msgEl = container?.querySelector(`div[data-id="${CSS.escape(messageId)}"]`);
+        } catch {
+          msgEl = Array.from(container?.querySelectorAll('[data-id]') || []).find(el => el.getAttribute('data-id') === messageId);
+        }
+        src = msgEl?.querySelector('img')?.src || msgEl?.querySelector('[data-testid="image-thumb"] img')?.src;
       }
       if (!src) return { success: false, error: 'Imagem não encontrada' };
 
       if (src.startsWith('data:')) {
-        // já é base64
         const [header, base64] = src.split(',');
         const mime = header.split(':')[1].split(';')[0];
         return { success: true, base64, mimeType: mime, isBase64: true };
@@ -428,13 +542,20 @@
         const res = await fetch(src);
         const blob = await res.blob();
         const arrayBuffer = await blob.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+        // base64 seguro para blobs grandes
+        let binary = '';
+        const bytes = new Uint8Array(arrayBuffer);
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+        }
+        const base64 = btoa(binary);
         return { 
           success: true, 
           base64, 
           mimeType: blob.type || 'image/jpeg', 
           size: blob.size,
-          data: Array.from(new Uint8Array(arrayBuffer))
+          data: Array.from(bytes)
         };
       }
 
@@ -444,55 +565,28 @@
     }
   }
 
-  // --- Inicialização ---
   function init() {
-    console.log('[Krever] Iniciando...');
-    // Aguarda WhatsApp carregar
+    console.log('[Krever] Iniciando v2...');
     const check = setInterval(() => {
       const chatList = queryFirst(SELECTORS.chatList);
       const main = queryFirst(SELECTORS.main);
       if (chatList || main) {
         clearInterval(check);
-        console.log('[Krever] WhatsApp Web detectado');
+        console.log('[Krever] WhatsApp Web detectado v2');
         startObserver();
         setInterval(injectFloatingButton, 3000);
         debounceExtract();
-        // Extrai a cada 5s também
-        setInterval(debounceExtract, 5000);
+        setInterval(debounceExtract, 4000);
       }
     }, 1000);
-
-    // Tenta injetar Store hook para acesso a dados internos
-    tryInjectStore();
   }
 
-  function tryInjectStore() {
-    // Injeta script no contexto da página para acessar webpack
-    const script = document.createElement('script');
-    script.textContent = `
-      (function() {
-        window.addEventListener('load', () => {
-          try {
-            // Tenta expor Store globalmente (método conhecido)
-            const webpackRequire = window.webpackChunkwhatsapp_web_client?.push?.[0]?.[1];
-            // Não faz nada destrutivo, só tenta expor
-            console.log('[Krever Injected] Tentando expor Store...');
-          } catch(e) {}
-        });
-      })();
-    `;
-    document.documentElement.appendChild(script);
-    script.remove();
-  }
-
-  // Inicia quando DOM pronto
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
     init();
   }
 
-  // Expõe para debug
   window.KreverContent = {
     extractMessages,
     getChatName,
