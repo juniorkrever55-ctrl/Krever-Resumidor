@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "Krever Resumidor - Consórcio",
+  "version": "1.0.0",
+  "description": "Resuma conversas de consórcio direto no WhatsApp Web com IA Groq e Ollama. Transcreve áudios, analisa imagens e exporta para Gemini.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "downloads",
+    "clipboardWrite",
+    "scripting",
+    "offscreen",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://web.whatsapp.com/*",
+    "https://api.groq.com/*",
+    "https://*.groq.com/*",
+    "http://127.0.0.1:11434/*",
+    "http://localhost:11434/*",
+    "https://gemini.google.com/*"
+  ],
+  "action": {
+    "default_title": "Krever Resumidor",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["lib/prompts.js", "lib/utils.js", "content/whatsapp.js"],
+      "css": ["content/whatsapp.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options/options.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["offscreen/offscreen.html", "icons/*"],
+      "matches": ["https://web.whatsapp.com/*"]
+    }
+  ]
+}

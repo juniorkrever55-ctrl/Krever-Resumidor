@@ -1,0 +1,36 @@
+/* Estilos para o botão injetado no WhatsApp Web */
+#krever-floating-btn {
+  animation: krever-pulse 2s infinite;
+}
+
+@keyframes krever-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(77, 224, 210, 0.4); }
+  70% { box-shadow: 0 0 0 8px rgba(77, 224, 210, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(77, 224, 210, 0); }
+}
+
+/* Indicador de que a extensão está ativa */
+#krever-status-indicator {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: linear-gradient(135deg, #101c2f, #14233a);
+  border: 1px solid #243a58;
+  color: #e8f0ff;
+  padding: 8px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-family: Inter, sans-serif;
+  z-index: 999999;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#krever-status-indicator .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4de0d2;
+  box-shadow: 0 0 0 4px rgba(77,224,210,.12);
+}
