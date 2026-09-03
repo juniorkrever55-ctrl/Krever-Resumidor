@@ -100,11 +100,36 @@ async function loadCurrentChat() {
 
   try {
     const data = await chrome.tabs.sendMessage(tab.id, { type: 'GET_CURRENT_CHAT' });
-    if (!data || !data.entries?.length) {
-      els.currentName.textContent = 'Nenhuma conversa selecionada';
-      els.currentInfo.textContent = 'Selecione uma conversa no WhatsApp Web';
-      els.currentEntries.innerHTML = '<p class="empty">Selecione uma conversa</p>';
+    console.log('[Krever Popup] Dados recebidos:', data);
+    
+    if (!data) {
+      els.currentName.textContent = 'Sem resposta do WhatsApp';
+      els.currentInfo.textContent = 'Recarregue o WhatsApp Web (F5)';
+      els.currentEntries.innerHTML = '<p class="empty">Content script não respondeu. Recarregue a página do WhatsApp.</p>';
       setButtonsDisabled(true);
+      return;
+    }
+
+    if (!data.entries?.length) {
+      // Tenta debug
+      let debugInfo = '';
+      try {
+        const debug = await chrome.tabs.sendMessage(tab.id, { type: 'DEBUG_DOM' });
+        console.log('[Krever] Debug DOM:', debug);
+        debugInfo = `\n\nDEBUG:\n- #main: ${debug.hasMain}\n- divs em #main: ${debug.mainDivs}\n- [data-id]: ${debug.dataIds}\n- message-in/out: ${debug.messageInOut}\n- msg-container: ${debug.msgContainer}\n- true/false: ${debug.trueFalse}\n- copyable: ${debug.copyable}\n- Nome: ${debug.chatName}`;
+      } catch (e) {
+        debugInfo = '\n\nNão foi possível obter debug';
+      }
+      
+      els.currentName.textContent = data.conversationName || 'Conversa detectada mas sem mensagens';
+      els.currentInfo.textContent = `Nome: ${data.conversationName} • Nenhuma mensagem extraída`;
+      els.currentEntries.innerHTML = `<p class="empty">Nenhuma mensagem encontrada nesta conversa.<br><br>Isso pode acontecer se:<br>• Você não selecionou uma conversa (clique em uma conversa no WhatsApp)<br>• WhatsApp Web mudou layout (abra F12 > Console e veja logs [Krever])<br><br>${debugInfo.replace(/\n/g, '<br>')}</p>`;
+      setButtonsDisabled(true);
+      
+      // Ainda salva o que tem (mesmo vazio) para debug
+      currentConversationId = data.conversationId;
+      currentEntries = [];
+      currentConversationName = data.conversationName;
       return;
     }
 
@@ -130,8 +155,10 @@ async function loadCurrentChat() {
     });
 
   } catch (e) {
+    console.error('[Krever Popup] Erro loadCurrentChat', e);
     els.currentName.textContent = 'Erro ao ler conversa';
-    els.currentInfo.textContent = e.message;
+    els.currentInfo.textContent = e.message + ' - Tente recarregar WhatsApp Web (F5)';
+    els.currentEntries.innerHTML = `<p class="empty">Erro: ${e.message}<br><br>Abra o console do WhatsApp (F12) e veja se aparece [Krever] logs</p>`;
   }
 }
 
