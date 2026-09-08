@@ -9,9 +9,9 @@
     :root { --bg:#08111f; --panel:#101c2f; --panel-2:#14233a; --line:#243a58; --text:#e8f0ff; --muted:#9cafc9; --blue:#4da3ff; --cyan:#4de0d2; --red:#ff7b89; --yellow:#f6c863; --shadow:0 18px 50px rgba(0,0,0,.24); }
     * { box-sizing:border-box; }
     body { margin:0; min-width:320px; font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--text); background:radial-gradient(circle at 10% -20%,#153966 0,transparent 36rem),var(--bg); }
-    button, textarea { font:inherit; }
+    button, textarea, input { font:inherit; }
     button { border:0; cursor:pointer; }
-    button:focus-visible, textarea:focus-visible { outline:3px solid rgba(77,163,255,.55); outline-offset:2px; }
+    button:focus-visible, textarea:focus-visible, input:focus-visible { outline:3px solid rgba(77,163,255,.55); outline-offset:2px; }
     .shell { max-width:1280px; margin:auto; padding:30px 22px 48px; }
     header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin-bottom:24px; }
     .eyebrow { margin:0 0 6px; color:var(--cyan); text-transform:uppercase; font-size:.72rem; letter-spacing:.12em; font-weight:800; }
@@ -70,6 +70,13 @@
     .image-preview { display:block; width:min(100%,300px); max-height:230px; margin:8px 0; border:1px solid #304866; border-radius:8px; object-fit:contain; background:#091525; }
     .image-status { color:#c4a8ff; font-size:.72rem; font-weight:750; text-transform:uppercase; letter-spacing:.05em; }
     .summary-area { padding:18px 19px 20px; border-top:1px solid var(--line); }
+    .extracted-area { padding:18px 19px; border-top:1px solid var(--line); background:rgba(77,224,210,0.04); }
+    .extracted-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
+    .extracted-field { display:flex; flex-direction:column; gap:4px; }
+    .extracted-field label { font-size:.7rem; margin:0; color:#9cafc9; }
+    .extracted-field input { min-height:34px; padding:7px 10px; border:1px solid #304866; border-radius:8px; background:#091525; color:var(--text); font-size:.82rem; }
+    .extracted-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+    .json-area { margin-top:14px; padding:12px; border:1px dashed #3a577b; border-radius:10px; background:#091525; }
     label { display:block; margin-bottom:7px; color:#b9c9df; font-size:.78rem; font-weight:750; }
     textarea { display:block; width:100%; min-height:88px; resize:vertical; padding:10px 12px; color:var(--text); border:1px solid #304866; border-radius:10px; background:#091525; line-height:1.45; font-size:.84rem; }
     .summary-actions { display:flex; align-items:center; gap:12px; margin-top:11px; flex-wrap:wrap; }
@@ -80,7 +87,7 @@
     .manual textarea { min-height:170px; }
     .small { margin:5px 0 0; color:var(--muted); font-size:.75rem; line-height:1.42; }
     .hidden { display:none !important; }
-    @media (max-width:800px) { .shell { padding:22px 14px 38px; } header { display:block; } header .pill { margin-top:14px; } .connection { grid-template-columns:1fr; } .qr-area { width:150px; min-height:150px; } .layout { grid-template-columns:1fr; } .conversation-list { max-height:240px; } .main { min-height:auto; } .manual-grid { grid-template-columns:1fr; } }
+    @media (max-width:800px) { .shell { padding:22px 14px 38px; } header { display:block; } header .pill { margin-top:14px; } .connection { grid-template-columns:1fr; } .qr-area { width:150px; min-height:150px; } .layout { grid-template-columns:1fr; } .conversation-list { max-height:240px; } .main { min-height:auto; } .manual-grid { grid-template-columns:1fr; } .extracted-grid { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
@@ -89,7 +96,7 @@
       <div>
         <p class="eyebrow">Assistente de consórcio</p>
         <h1>Central de conversas</h1>
-        <p class="subhead">Conecte seu WhatsApp, transcreva áudios, analise imagens e prepare tudo para o Gemini.</p>
+        <p class="subhead">Groq só pra áudio/imagem. Resumo final no Gemini sem limite.</p>
       </div>
       <div class="pill"><span class="dot" id="header-dot"></span><span id="header-status">Iniciando conexão</span></div>
     </header>
@@ -130,6 +137,35 @@
           </div>
         </div>
         <div class="entries" id="entries"><p class="empty">Conecte o WhatsApp e escolha uma conversa para ver o histórico armazenado.</p></div>
+
+        <section class="extracted-area">
+          <h2>📋 Dados detectados automaticamente (sem IA - 0 token)</h2>
+          <p class="small">Extração local por regex. Funciona mesmo sem Groq. Corrija se precisar antes de exportar.</p>
+          <div class="extracted-grid">
+            <div class="extracted-field"><label>CPF</label><input id="field-cpf" placeholder="000.000.000-00"></div>
+            <div class="extracted-field"><label>CNPJ</label><input id="field-cnpj" placeholder="00.000.000/0000-00"></div>
+            <div class="extracted-field"><label>Renda mensal</label><input id="field-renda" placeholder="R$ 5.000"></div>
+            <div class="extracted-field"><label>Valor carta / crédito</label><input id="field-carta" placeholder="R$ 200.000"></div>
+            <div class="extracted-field"><label>Parcela negociada</label><input id="field-parcela" placeholder="R$ 800"></div>
+            <div class="extracted-field"><label>Lance recurso próprio</label><input id="field-lance" placeholder="R$ 20.000"></div>
+            <div class="extracted-field"><label>Prazo</label><input id="field-prazo" placeholder="180 meses"></div>
+            <div class="extracted-field"><label>Profissão</label><input id="field-profissao" placeholder=""></div>
+          </div>
+          <div class="extracted-actions">
+            <button class="button secondary" type="button" id="btn-copy-json-prompt">Copiar prompt JSON pro Gemini</button>
+            <button class="button secondary" type="button" id="btn-copy-extracted">Copiar dados como texto</button>
+            <button class="button secondary" type="button" id="btn-clear-extracted">Limpar</button>
+          </div>
+          <div class="json-area">
+            <label for="gemini-json-input">Colar retorno JSON do Gemini aqui (opcional)</label>
+            <textarea id="gemini-json-input" rows="4" placeholder='Cole aqui o JSON que o Gemini retornar: {"cpf": "...", "renda_mensal": "..."}'></textarea>
+            <div class="extracted-actions">
+              <button class="button secondary" type="button" id="btn-apply-json">Aplicar JSON nos campos</button>
+            </div>
+            <p class="small">Fluxo: 1) Clique em "Copiar prompt JSON pro Gemini" 2) No Gemini, com o TXT anexado, cole o prompt 3) Copie o JSON que ele retornar e cole aqui 4) Clique em Aplicar.</p>
+          </div>
+        </section>
+
         <section class="summary-area">
           <label for="instructions">Instruções do resumo (usado no Gemini)</label>
           <textarea id="instructions" rows="10">Você é assistente de vendas de consórcio. Gere uma nota interna de CRM em português do Brasil, objetiva e profissional.
@@ -143,8 +179,8 @@ REGRAS:
 - Ignore LID/JID técnicos (números longos no cabeçalho) - não são dados comerciais.
 - Não invente, não estime, não complete. Apenas fatos da conversa.
 - Entregue apenas texto simples, sem PDF, link ou anexo.</textarea>
-          <p class="small">Fluxo: Groq transcreve áudios e analisa imagens (botões acima). Resumo final você gera no Gemini com o TXT + este prompt.</p>
-          <div class="summary-actions"><button class="button" type="button" id="summarize-button" disabled>Gerar resumo da conversa (Groq)</button><button class="button secondary" type="button" id="token-estimate-button" disabled>Estimar tokens</button><button class="button secondary" type="button" id="copy-summary-button" disabled>Copiar resumo</button><span class="hint" id="summary-hint">Escolha uma conversa para resumir.</span></div>
+          <p class="small">Groq transcreve áudios e analisa imagens. Resumo final no Gemini com TXT + este prompt.</p>
+          <div class="summary-actions"><button class="button" type="button" id="summarize-button" disabled>Gerar resumo da conversa (Groq - opcional)</button><button class="button secondary" type="button" id="token-estimate-button" disabled>Estimar tokens</button><button class="button secondary" type="button" id="copy-summary-button" disabled>Copiar resumo</button><span class="hint" id="summary-hint">Escolha uma conversa.</span></div>
           <div class="token-estimate" id="token-estimate">Selecione uma conversa para estimar o uso de tokens.</div>
           <div class="summary-output" id="summary-output" aria-live="polite">O resumo aparecerá aqui.</div>
         </section>
@@ -153,7 +189,7 @@ REGRAS:
 
     <section class="card manual">
       <h2>Resumo de texto avulso</h2>
-      <p class="small">Use esta opção para testar a IA ou resumir uma conversa colada manualmente. Não envie dados sem autorização do titular.</p>
+      <p class="small">Use esta opção para testar a IA ou resumir uma conversa colada manualmente.</p>
       <div class="manual-grid">
         <div><label for="manual-text">Conversa</label><textarea id="manual-text" placeholder="Cole uma conversa aqui…"></textarea></div>
         <div><label>Resultado</label><div class="summary-output" id="manual-output">O resumo manual aparecerá aqui.</div><button class="button" type="button" id="manual-button">Gerar resumo</button></div>
@@ -174,6 +210,10 @@ REGRAS:
       summarizeButton: document.getElementById('summarize-button'), tokenEstimateButton: document.getElementById('token-estimate-button'), tokenEstimate: document.getElementById('token-estimate'), copySummaryButton: document.getElementById('copy-summary-button'), summaryHint: document.getElementById('summary-hint'),
       summaryOutput: document.getElementById('summary-output'), instructions: document.getElementById('instructions'),
       manualText: document.getElementById('manual-text'), manualOutput: document.getElementById('manual-output'), manualButton: document.getElementById('manual-button'),
+      fieldCpf: document.getElementById('field-cpf'), fieldCnpj: document.getElementById('field-cnpj'), fieldRenda: document.getElementById('field-renda'), fieldCarta: document.getElementById('field-carta'),
+      fieldParcela: document.getElementById('field-parcela'), fieldLance: document.getElementById('field-lance'), fieldPrazo: document.getElementById('field-prazo'), fieldProfissao: document.getElementById('field-profissao'),
+      btnCopyJsonPrompt: document.getElementById('btn-copy-json-prompt'), btnCopyExtracted: document.getElementById('btn-copy-extracted'), btnClearExtracted: document.getElementById('btn-clear-extracted'),
+      geminiJsonInput: document.getElementById('gemini-json-input'), btnApplyJson: document.getElementById('btn-apply-json'),
     };
 
     const statusCopy = {
@@ -212,7 +252,6 @@ REGRAS:
       elements.headerStatus.textContent = label;
       elements.connectionText.textContent = status.error || statusCopy[status.status] || statusCopy.connecting;
       elements.groqWarning.classList.toggle('hidden', status.groqConfigured);
-
       if (status.qrImage && status.status === 'awaiting_qr') {
         if (elements.qrImage.src !== status.qrImage) elements.qrImage.src = status.qrImage;
         elements.qrImage.classList.remove('hidden');
@@ -300,8 +339,26 @@ REGRAS:
         Object.assign(entry, result.entry);
         renderEntries(state.entries);
         loadConversations();
+        extractAndRenderLocalData();
       } catch (error) {
         alert(`Não foi possível transcrever: ${error.message}`);
+      } finally {
+        if (document.body.contains(button)) setButtonLoading(button, false);
+      }
+    }
+
+    async function analyzeImageEntry(entry, button) {
+      if (!state.selectedConversationId || !entry.sourceMessageId) return;
+      if (!confirm('Analisar esta imagem vai enviar somente este arquivo para a Groq Vision e consumir créditos. Deseja continuar?')) return;
+      setButtonLoading(button, true, 'Analisando…');
+      try {
+        const result = await request(`/api/conversations/${encodeURIComponent(state.selectedConversationId)}/image/${encodeURIComponent(entry.sourceMessageId)}/analyze`, { method: 'POST', body: '{}' });
+        Object.assign(entry, result.entry);
+        renderEntries(state.entries);
+        loadConversations();
+        extractAndRenderLocalData();
+      } catch (error) {
+        alert(`Não foi possível analisar: ${error.message}`);
       } finally {
         if (document.body.contains(button)) setButtonLoading(button, false);
       }
@@ -337,6 +394,12 @@ REGRAS:
             const preview = document.createElement('img'); preview.className = 'image-preview'; preview.loading = 'lazy'; preview.alt = 'Imagem recebida na conversa';
             preview.src = `/api/conversations/${encodeURIComponent(state.selectedConversationId)}/image/${encodeURIComponent(entry.sourceMessageId)}`;
             message.append(preview);
+            const tools = document.createElement('div'); tools.className = 'audio-tools';
+            if (entry.image?.analysisStatus !== 'completed') {
+              const action = document.createElement('button'); action.type = 'button'; action.className = 'audio-action'; action.style.background = '#c4a8ff'; action.textContent = 'Analisar esta imagem';
+              action.addEventListener('click', () => analyzeImageEntry(entry, action)); tools.append(action);
+            }
+            message.append(tools);
           } else {
             const note = document.createElement('div'); note.className = 'audio-note'; note.textContent = 'Este arquivo não está disponível localmente.'; message.append(note);
           }
@@ -346,12 +409,75 @@ REGRAS:
       elements.entries.scrollTop = elements.entries.scrollHeight;
     }
 
+    // --- Extração local sem IA ---
+    function extractLocalData(text) {
+      const t = String(text || '');
+      const result = { cpf: '', cnpj: '', renda: '', carta: '', parcela: '', lance: '', prazo: '', profissao: '' };
+
+      // CPF - prioriza com contexto CPF
+      const cpfMatch = t.match(/CPF\D{0,20}(\d{3}\.?\d{3}\.?\d{3}-?\d{2})/i) || t.match(/\b(\d{3}\.\d{3}\.\d{3}-\d{2})\b/) || t.match(/\b(\d{11})\b/);
+      if (cpfMatch) {
+        const digits = cpfMatch[1].replace(/\D/g,'');
+        if (digits.length === 11 && !/^(\d)\1+$/.test(digits)) result.cpf = cpfMatch[1];
+      }
+
+      // CNPJ
+      const cnpjMatch = t.match(/CNPJ\D{0,20}(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/i) || t.match(/\b(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})\b/) || t.match(/\b(\d{14})\b/);
+      if (cnpjMatch) {
+        const digits = cnpjMatch[1].replace(/\D/g,'');
+        if (digits.length === 14) result.cnpj = cnpjMatch[1];
+      }
+
+      // Renda
+      const rendaMatch = t.match(/renda\D{0,20}R?\$?\s*([\d\.\,]+)/i);
+      if (rendaMatch) result.renda = 'R$ ' + rendaMatch[1];
+
+      // Carta / crédito
+      const cartaMatch = t.match(/(?:carta|crédito|credito)\D{0,25}R?\$?\s*([\d\.\,]+)/i);
+      if (cartaMatch) result.carta = 'R$ ' + cartaMatch[1];
+
+      // Parcela
+      const parcelaMatch = t.match(/parcela\D{0,20}R?\$?\s*([\d\.\,]+)/i);
+      if (parcelaMatch) result.parcela = 'R$ ' + parcelaMatch[1];
+
+      // Lance recurso próprio - procura "tenho", "guardado", "possuo"
+      const lanceProprio = t.match(/(?:tenho|guardad[oa]|possuo|junt[ei])\D{0,30}R?\$?\s*([\d\.\,]+)/i) || t.match(/lance\D{0,10}(?:recurso próprio|próprio)\D{0,20}R?\$?\s*([\d\.\,]+)/i);
+      if (lanceProprio) result.lance = 'R$ ' + lanceProprio[1];
+      else {
+        const lanceGen = t.match(/lance\D{0,20}R?\$?\s*([\d\.\,]+)/i);
+        if (lanceGen && !/embutido|fidelidade/i.test(t.slice(lanceGen.index-20, lanceGen.index+20))) result.lance = 'R$ ' + lanceGen[1];
+      }
+
+      // Prazo
+      const prazoMatch = t.match(/(\d{2,4})\s*(?:meses|mês|mes|x|parcelas)/i);
+      if (prazoMatch) result.prazo = prazoMatch[1] + ' meses';
+
+      // Profissão - lista curta
+      const profMatch = t.match(/(?:sou|trabalho como|profissão)\D{0,20}(autônomo|CLT|empresário|aposentado|servidor|motorista|vendedor|professor|médico|enfermeiro|advogado|engenheiro)/i);
+      if (profMatch) result.profissao = profMatch[1];
+
+      return result;
+    }
+
+    function extractAndRenderLocalData() {
+      const fullText = state.entries.map(e => e.text).join('\n');
+      const data = extractLocalData(fullText);
+      elements.fieldCpf.value = data.cpf;
+      elements.fieldCnpj.value = data.cnpj;
+      elements.fieldRenda.value = data.renda;
+      elements.fieldCarta.value = data.carta;
+      elements.fieldParcela.value = data.parcela;
+      elements.fieldLance.value = data.lance;
+      elements.fieldPrazo.value = data.prazo;
+      elements.fieldProfissao.value = data.profissao;
+    }
+
     async function loadConversation(id, preserveSummary = false) {
       try {
         const data = await request(`/api/conversations/${encodeURIComponent(id)}?limit=500`);
         state.selectedConversationId = id;
         elements.conversationTitle.textContent = data.conversation.name;
-        elements.conversationInfo.textContent = `${data.conversation.messageCount} mensagem(ns) registrada(s) · ${data.conversation.isGroup ? 'grupo' : 'conversa individual'}`;
+        elements.conversationInfo.textContent = `${data.conversation.messageCount} mensagem(ns) · ${data.conversation.isGroup ? 'grupo' : 'individual'}`;
         elements.summarizeButton.disabled = false;
         elements.tokenEstimateButton.disabled = false;
         elements.prepareGeminiButton.disabled = false;
@@ -359,12 +485,14 @@ REGRAS:
         elements.transcribeAllButton.disabled = false;
         elements.analyzeAllImagesButton.disabled = false;
         elements.olderHistoryButton.disabled = false;
-        elements.summaryHint.textContent = 'Use Groq para transcrever áudios e analisar imagens. Resumo final no Gemini.';
+        elements.summaryHint.textContent = 'Groq só para mídia. Resumo no Gemini.';
         if (!preserveSummary) {
           elements.summaryOutput.textContent = 'O resumo aparecerá aqui.';
           elements.copySummaryButton.disabled = true;
         }
-        renderEntries(data.entries); loadConversations(); updateTokenEstimate();
+        renderEntries(data.entries);
+        extractAndRenderLocalData();
+        loadConversations(); updateTokenEstimate();
       } catch (error) { elements.summaryOutput.textContent = `Erro ao abrir conversa: ${error.message}`; }
     }
 
@@ -376,8 +504,7 @@ REGRAS:
       try {
         const data = await request(`/api/conversations/${encodeURIComponent(conversationId)}/token-estimate`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value }) });
         if (state.selectedConversationId !== conversationId) return;
-        const compacted = data.compacted ? ` Contexto compactado de ${data.originalCharacters.toLocaleString('pt-BR')} para ${data.sentCharacters.toLocaleString('pt-BR')} caracteres.` : '';
-        elements.tokenEstimate.textContent = `Estimativa: ≈ ${data.estimatedInputTokens.toLocaleString('pt-BR')} tokens de entrada + até ${data.outputTokenBudget.toLocaleString('pt-BR')} de saída = ≈ ${data.estimatedTotalTokens.toLocaleString('pt-BR')} tokens.${compacted}`;
+        elements.tokenEstimate.textContent = `Estimativa Groq: ≈ ${data.estimatedInputTokens.toLocaleString('pt-BR')} entrada + ${data.outputTokenBudget} saída = ≈ ${data.estimatedTotalTokens.toLocaleString('pt-BR')} tokens. (Use Gemini pra não gastar)`;
       } catch (error) {
         elements.tokenEstimate.textContent = `Não foi possível estimar tokens: ${error.message}`;
       }
@@ -422,7 +549,8 @@ REGRAS:
       if (!state.selectedConversationId) return;
       window.open(state.geminiChatUrl, '_blank', 'noopener');
       downloadConversationTxt();
-      const geminiPrompt = `Analise o arquivo TXT que vou anexar. Ele contém o histórico de uma conversa de consórcio.\n\n${elements.instructions.value}`;
+      const extracted = `Dados detectados localmente:\n- CPF: ${elements.fieldCpf.value || 'não detectado'}\n- CNPJ: ${elements.fieldCnpj.value || 'não detectado'}\n- Renda: ${elements.fieldRenda.value || 'não detectado'}\n- Carta: ${elements.fieldCarta.value || 'não detectado'}\n- Parcela: ${elements.fieldParcela.value || 'não detectado'}\n- Lance próprio: ${elements.fieldLance.value || 'não detectado'}\n- Prazo: ${elements.fieldPrazo.value || 'não detectado'}\n- Profissão: ${elements.fieldProfissao.value || 'não detectado'}\n\n`;
+      const geminiPrompt = `${extracted}Analise o arquivo TXT que vou anexar. Ele contém o histórico de uma conversa de consórcio.\n\n${elements.instructions.value}`;
       try {
         if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(geminiPrompt);
         else {
@@ -431,9 +559,58 @@ REGRAS:
           temporary.style.position = 'fixed'; temporary.style.opacity = '0';
           document.body.append(temporary); temporary.select(); document.execCommand('copy'); temporary.remove();
         }
-        elements.conversationInfo.textContent = 'TXT baixado e prompt copiado. No Gemini, anexe o TXT e cole o prompt.';
+        elements.conversationInfo.textContent = 'TXT + dados locais + prompt copiados. No Gemini, anexe o TXT e cole.';
       } catch {
-        elements.conversationInfo.textContent = 'TXT baixado. No Gemini, anexe o arquivo e copie o prompt manualmente do campo de instruções.';
+        elements.conversationInfo.textContent = 'TXT baixado. No Gemini, anexe e copie o prompt manualmente.';
+      }
+    }
+
+    function copyJsonPrompt() {
+      const prompt = `Analise o TXT que vou anexar (histórico de consórcio). Retorne APENAS um JSON válido, sem explicação, nesse formato exato:\n{\n  "cpf": "000.000.000-00 ou null",\n  "cnpj": "00.000.000/0000-00 ou null",\n  "renda_mensal": "R$ 5000 ou null",\n  "valor_carta": "R$ 200000 ou null",\n  "parcela_negociada": "R$ 800 ou null",\n  "lance_recurso_proprio": "R$ 20000 ou null (SOMENTE dinheiro que cliente disse ter guardado/possuir, nunca parcela/taxa/embutido/fidelidade)",\n  "prazo": "180 meses ou null",\n  "profissao": "autônomo ou null",\n  "status": "quente/morno/frio/aguardando/fechado ou null",\n  "proximo_passo": "texto curto ou null",\n  "objecao": "texto ou null"\n}\nRegras: não invente, use null se não achar. CPF 11 dígitos, CNPJ 14 dígitos. Ignore LID/JID técnicos.`;
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(prompt).then(() => {
+          elements.conversationInfo.textContent = 'Prompt JSON copiado! Cole no Gemini (com o TXT anexado).';
+        });
+      } else {
+        promptCopyFallback(prompt);
+      }
+    }
+
+    function promptCopyFallback(text) {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.append(ta); ta.select(); document.execCommand('copy'); ta.remove();
+      elements.conversationInfo.textContent = 'Prompt JSON copiado!';
+    }
+
+    function copyExtractedAsText() {
+      const txt = `Dados relevantes (detecção local):\n- CPF: ${elements.fieldCpf.value || 'não detectado'}\n- CNPJ: ${elements.fieldCnpj.value || 'não detectado'}\n- Renda: ${elements.fieldRenda.value || 'não detectado'}\n- Carta: ${elements.fieldCarta.value || 'não detectado'}\n- Parcela: ${elements.fieldParcela.value || 'não detectado'}\n- Lance próprio: ${elements.fieldLance.value || 'não detectado'}\n- Prazo: ${elements.fieldPrazo.value || 'não detectado'}\n- Profissão: ${elements.fieldProfissao.value || 'não detectado'}`;
+      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(txt);
+      else { const ta=document.createElement('textarea'); ta.value=txt; document.body.append(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+      elements.conversationInfo.textContent = 'Dados copiados como texto!';
+    }
+
+    function applyJsonFromGemini() {
+      try {
+        const raw = elements.geminiJsonInput.value.trim();
+        if (!raw) return alert('Cole o JSON do Gemini primeiro');
+        // Tenta extrair JSON mesmo se vier com ```json
+        const cleaned = raw.replace(/```json|```/g,'').trim();
+        const jsonStart = cleaned.indexOf('{');
+        const jsonEnd = cleaned.lastIndexOf('}');
+        const jsonStr = cleaned.slice(jsonStart, jsonEnd+1);
+        const data = JSON.parse(jsonStr);
+        if (data.cpf) elements.fieldCpf.value = data.cpf;
+        if (data.cnpj) elements.fieldCnpj.value = data.cnpj;
+        if (data.renda_mensal) elements.fieldRenda.value = data.renda_mensal;
+        if (data.valor_carta) elements.fieldCarta.value = data.valor_carta;
+        if (data.parcela_negociada) elements.fieldParcela.value = data.parcela_negociada;
+        if (data.lance_recurso_proprio) elements.fieldLance.value = data.lance_recurso_proprio;
+        if (data.prazo) elements.fieldPrazo.value = data.prazo;
+        if (data.profissao) elements.fieldProfissao.value = data.profissao;
+        elements.conversationInfo.textContent = 'JSON aplicado nos campos! Revise e exporte.';
+      } catch (e) {
+        alert('JSON inválido: ' + e.message);
       }
     }
 
@@ -514,16 +691,11 @@ REGRAS:
       }
       if (job.status === 'failed') throw new Error('Lote de transcrição interrompido.');
       await loadConversation(conversationId, true);
-      if (job.failed) elements.summaryHint.textContent = `${job.succeeded} áudio(s) transcrito(s); ${job.failed} falharam. Resumo seguirá com disponível.`;
-      else elements.summaryHint.textContent = `${job.succeeded} áudio(s) transcrito(s). Gerando resumo…`;
     }
 
     async function analyzePendingImagesBeforeSummary(conversationId) {
       const stats = await request(`/api/conversations/${encodeURIComponent(conversationId)}/image/pending`);
-      if (!stats.available) {
-        if (stats.unavailable) elements.summaryHint.textContent = `${stats.unavailable} imagem(ns) não estão disponíveis.`;
-        return;
-      }
+      if (!stats.available) return;
       const unavailable = stats.unavailable ? ` ${stats.unavailable} imagem(ns) sem arquivo local serão ignoradas.` : '';
       const shouldAnalyze = confirm(`Esta conversa tem ${stats.available} imagem(ns) ainda não analisada(s).\n\nOK: analisar todas antes de resumir (consome créditos da Groq).\nCancelar: resumir sem imagens.${unavailable}`);
       if (!shouldAnalyze) return;
@@ -537,8 +709,6 @@ REGRAS:
       }
       if (job.status === 'failed') throw new Error('Lote de imagens interrompido.');
       await loadConversation(conversationId, true);
-      if (job.failed) elements.summaryHint.textContent = `${job.succeeded} imagem(ns) analisada(s); ${job.failed} falharam. Resumo seguirá com disponível.`;
-      else elements.summaryHint.textContent = `${job.succeeded} imagem(ns) analisada(s). Gerando resumo…`;
     }
 
     async function summarizeConversation() {
@@ -630,6 +800,14 @@ REGRAS:
     elements.manualButton.addEventListener('click', summarizeManual);
     elements.conversationSearch.addEventListener('input', () => renderConversations());
     elements.instructions.addEventListener('input', scheduleTokenEstimate);
+    elements.btnCopyJsonPrompt.addEventListener('click', copyJsonPrompt);
+    elements.btnCopyExtracted.addEventListener('click', copyExtractedAsText);
+    elements.btnClearExtracted.addEventListener('click', () => {
+      elements.fieldCpf.value=''; elements.fieldCnpj.value=''; elements.fieldRenda.value=''; elements.fieldCarta.value='';
+      elements.fieldParcela.value=''; elements.fieldLance.value=''; elements.fieldPrazo.value=''; elements.fieldProfissao.value='';
+      elements.geminiJsonInput.value='';
+    });
+    elements.btnApplyJson.addEventListener('click', applyJsonFromGemini);
 
     loadAssistantConfig(); refreshStatus(); loadConversations();
     setInterval(refreshStatus, 5000); setInterval(loadConversations, 15000);

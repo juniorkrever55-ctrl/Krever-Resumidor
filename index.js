@@ -1805,6 +1805,15 @@ app.post('/api/conversations/:id/audio/:messageId/transcribe', async (req, res, 
   }
 });
 
+app.post('/api/conversations/:id/image/:messageId/analyze', async (req, res, next) => {
+  try {
+    const entry = await analyzeStoredConversationImage(req.params.id, req.params.messageId);
+    return res.json({ entry: toPublicEntry(entry) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/summarize', async (req, res, next) => {
   try {
     const summary = await summarize(req.body?.text, req.body?.instructions);
