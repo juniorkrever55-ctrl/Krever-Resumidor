@@ -39,11 +39,21 @@
         <div class="actions">
           <button id="btn-scroll-history" class="btn secondary small">⬆️ Buscar 50 anteriores</button>
           <button id="btn-refresh-current" class="btn secondary small">↻ Atualizar</button>
+          <button id="btn-open-panel" class="btn secondary small">📋 Abrir painel no WhatsApp</button>
         </div>
       </div>
 
       <div class="entries" id="current-entries">
         <p class="empty">Aguardando conversa do WhatsApp Web...</p>
+      </div>
+
+      <div style="padding:8px; background:#0f1f2f; border:1px solid #243a58; border-radius:8px; margin-bottom:10px;">
+        <p style="font-size:10px; color:#f6c863; margin-bottom:6px;">💡 Áudio não capturou? Arraste arquivo aqui (método 100%):</p>
+        <div id="drop-zone" style="border:2px dashed #4de0d2; border-radius:8px; padding:10px; text-align:center; font-size:10px; color:#9cafc9; cursor:pointer; background:rgba(77,224,210,0.05);">
+          📁 Arraste áudios aqui ou clique<br>
+          <span style="font-size:9px;">.ogg, .mp3, .m4a, .wav</span>
+          <input type="file" id="file-input" accept="audio/*" multiple style="display:none;">
+        </div>
       </div>
 
       <div class="summary-area">

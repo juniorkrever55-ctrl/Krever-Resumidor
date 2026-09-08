@@ -21,9 +21,12 @@ const els = {
   manualOutput: document.getElementById('manual-output'),
   aiProvider: document.getElementById('ai-provider'),
   messageCount: document.getElementById('message-count'),
+  dropZone: document.getElementById('drop-zone'),
+  fileInput: document.getElementById('file-input'),
   // buttons
   btnScroll: document.getElementById('btn-scroll-history'),
   btnRefreshCurrent: document.getElementById('btn-refresh-current'),
+  btnOpenPanel: document.getElementById('btn-open-panel'),
   btnTranscribeAll: document.getElementById('btn-transcribe-all'),
   btnAnalyzeAll: document.getElementById('btn-analyze-all'),
   btnToken: document.getElementById('btn-token'),
@@ -695,9 +698,111 @@ async function loadSavedConversations() {
   }
 }
 
+async function handleManualAudioFiles(files) {
+  if (!files.length) return;
+  console.log(`[Krever Popup] ${files.length} arquivos manuais`);
+  
+  els.summaryOutput.textContent = `Transcrevendo ${files.length} arquivo(s) manual(is)...`;
+  els.btnSummarize.disabled = true;
+
+  let combinedText = '';
+  let successCount = 0;
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    els.summaryOutput.textContent = `Transcrevendo ${i+1}/${files.length}: ${file.name} (${(file.size/1024).toFixed(0)}KB)...`;
+    try {
+      const buf = await file.arrayBuffer();
+      const res = await chrome.runtime.sendMessage({
+        type: 'TRANSCRIBE_AUDIO',
+        blobData: Array.from(new Uint8Array(buf)),
+        mimeType: file.type || 'audio/ogg',
+        fileName: file.name,
+        conversationId: currentConversationId || `manual_${Date.now()}`,
+        messageId: `manual_${Date.now()}_${i}`
+      });
+      if (res.success) {
+        successCount++;
+        combinedText += `\n[Áudio ${file.name} transcrito] ${res.result.raw || res.result.text}\n`;
+        // Adiciona como entry
+        currentEntries.push({
+          id: `manual_${Date.now()}_${i}`,
+          sourceId: `manual_${Date.now()}_${i}`,
+          timestamp: new Date().toISOString(),
+          fromMe: false,
+          sender: 'Áudio Manual',
+          type: 'text',
+          text: `[Áudio ${file.name} transcrito] ${res.result.raw || res.result.text}`,
+          conversationName: currentConversationName,
+          jid: currentConversationId
+        });
+      }
+    } catch (e) {
+      console.warn('Erro transcrição manual', file.name, e);
+    }
+  }
+
+  if (combinedText) {
+    els.summaryOutput.textContent = `✅ ${successCount}/${files.length} transcritos (manual):\n${combinedText}\n\nAgora clique em Gerar Resumo para incluir no resumo.`;
+    renderEntries(currentEntries);
+    // Salva
+    if (currentConversationId) {
+      chrome.runtime.sendMessage({
+        type: 'CONVERSATION_UPDATE',
+        payload: { conversationId: currentConversationId, conversationName: currentConversationName, entries: currentEntries }
+      });
+    }
+  } else {
+    els.summaryOutput.textContent = '❌ Falha na transcrição manual. Verifique sua chave Groq em Configurações.';
+  }
+  els.btnSummarize.disabled = false;
+}
+
+function setupDropZone() {
+  const dropZone = els.dropZone;
+  const fileInput = els.fileInput;
+  if (!dropZone || !fileInput) return;
+
+  dropZone.onclick = () => fileInput.click();
+
+  dropZone.ondragover = (e) => {
+    e.preventDefault();
+    dropZone.style.background = 'rgba(77,224,210,0.15)';
+    dropZone.style.borderColor = '#4de0d2';
+  };
+  dropZone.ondragleave = () => {
+    dropZone.style.background = 'rgba(77,224,210,0.05)';
+    dropZone.style.borderColor = '#4de0d2';
+  };
+  dropZone.ondrop = async (e) => {
+    e.preventDefault();
+    dropZone.style.background = 'rgba(77,224,210,0.05)';
+    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('audio/') || f.name.match(/\.(ogg|mp3|m4a|wav|opus|aac)$/i));
+    if (files.length) await handleManualAudioFiles(files);
+    else alert('Arraste apenas arquivos de áudio (.ogg, .mp3, .m4a, .wav)');
+  };
+  fileInput.onchange = async (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length) await handleManualAudioFiles(files);
+    fileInput.value = '';
+  };
+}
+
+async function openPanelInWhatsApp() {
+  try {
+    const tab = await checkWhatsAppTab();
+    if (!tab) return alert('Abra o WhatsApp Web primeiro');
+    await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_PANEL' });
+    window.close(); // fecha popup para mostrar painel no WhatsApp
+  } catch (e) {
+    alert('Erro ao abrir painel: ' + e.message + '\nTente clicar no botão 📋 Resumidor dentro do header do WhatsApp Web');
+  }
+}
+
 // Event listeners
 els.btnScroll?.addEventListener('click', scrollForHistory);
 els.btnRefreshCurrent?.addEventListener('click', loadCurrentChat);
+els.btnOpenPanel?.addEventListener('click', openPanelInWhatsApp);
 els.refreshStatus?.addEventListener('click', () => { checkWhatsAppTab(); loadCurrentChat(); });
 els.btnTranscribeAll?.addEventListener('click', transcribeAll);
 els.btnAnalyzeAll?.addEventListener('click', analyzeAll);
@@ -733,4 +838,5 @@ els.aiProvider?.addEventListener('change', async () => {
   await getConfig();
   await checkWhatsAppTab();
   await loadCurrentChat();
+  setupDropZone();
 })();

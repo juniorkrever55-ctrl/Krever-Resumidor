@@ -1,148 +1,272 @@
-/* Krever Resumidor - Content Script v5
-   FIXES CRÍTICOS:
-   - Mensagens sumiram: extração ultra robusta com 7 estratégias + fallback total
-   - Áudio sem play: auto-play mutado + captura via Store + fetch direto
-   - Painel lateral melhorado
+/* Krever Resumidor v6 - FIX DEFINITIVO ÁUDIO
+   PROBLEMA: blob: URLs são revogados rápido e estão em contexto isolado
+   SOLUÇÕES:
+   1. Hook URL.createObjectURL + captura direta do Blob objeto (não só URL)
+   2. Acesso via Store.Msg.mediaData.mediaBlob (blob já descriptografado)
+   3. Auto-play mutado + tentativa de fetch
+   4. Fallback manual: download + drag-and-drop
 */
 
 (() => {
-  console.log('%c[Krever v5 - Auto Audio + Fix Msgs]', 'background: #ff6b35; color: #fff; padding: 4px 10px; border-radius: 6px; font-weight: bold;');
+  console.log('%c[Krever v6 - Fix Definitivo Áudio]', 'background: #ff6b35; color: #fff; padding: 4px 10px; border-radius: 6px; font-weight: bold;');
 
   let currentChatId = null;
   let observer = null;
   let lastCount = 0;
-  let capturedBlobs = new Map();
+  let capturedBlobs = new Map(); // url -> {blob, timestamp}
+  let capturedBlobObjects = new Map(); // messageId aproximado -> blob
   let lastAudioBlob = null;
   let panelOpen = false;
-  let storeExposed = false;
+  let storeReady = false;
 
   function q(sel, root = document) { try { return root.querySelector(sel); } catch { return null; } }
   function qa(sel, root = document) { try { return Array.from(root.querySelectorAll(sel)); } catch { return []; } }
 
-  // ===== INJEÇÃO PARA CAPTURAR STORE E BLOBS =====
+  // ===== INJEÇÃO V6 - CAPTURA BLOB OBJETO DIRETO + STORE =====
   function injectHelpers() {
     const script = document.createElement('script');
     script.textContent = `
       (function() {
-        console.log('[Krever Injected v5] Iniciando hooks');
+        console.log('[Krever Injected v6] Iniciando');
         window.__kreverAudioBlobs = {};
-        window.__kreverBlobMap = {};
+        window.__kreverBlobObjects = {};
         window.__kreverLastAudio = null;
         window.__kreverStore = null;
+        window.__kreverMsgCache = {};
 
-        // Hook createObjectURL
+        // Hook createObjectURL para capturar BLOB OBJETO (não só URL)
         try {
           const origCreateObjectURL = URL.createObjectURL;
+          const origRevokeObjectURL = URL.revokeObjectURL;
+          
           URL.createObjectURL = function(blob) {
             const url = origCreateObjectURL.call(this, blob);
-            if (blob && blob.type && (blob.type.startsWith('audio/') || blob.type.includes('ogg') || blob.type.includes('mp3') || blob.type.includes('mpeg'))) {
-              console.log('[Krever Injected] Audio blob capturado:', url, blob.type, blob.size);
-              window.__kreverAudioBlobs[url] = blob;
-              window.__kreverLastAudio = { url, type: blob.type, size: blob.size, timestamp: Date.now() };
-              window.__kreverBlobMap[url] = blob;
-              window.postMessage({ type: 'KREVER_AUDIO_BLOB', url, mimeType: blob.type, size: blob.size }, '*');
-            }
+            try {
+              if (blob && blob.type && (blob.type.startsWith('audio/') || blob.type.includes('ogg') || blob.type.includes('opus') || blob.type.includes('mp3') || blob.type.includes('mpeg') || blob.size > 1000)) {
+                // Só captura se parece áudio (tamanho > 1kb e tipo áudio ou tamanho grande)
+                if (blob.size > 5000 || (blob.type && blob.type.startsWith('audio/'))) {
+                  console.log('[Krever Injected] Audio blob OBJETO capturado:', url, blob.type, blob.size);
+                  window.__kreverAudioBlobs[url] = blob;
+                  window.__kreverBlobObjects[url] = blob;
+                  window.__kreverLastAudio = { url, type: blob.type, size: blob.size, timestamp: Date.now(), blob };
+                  // Guarda blob em si para acesso posterior mesmo se URL revogada
+                  window.__kreverBlobObjects[Date.now()] = blob;
+                  
+                  // Tenta converter blob para base64 imediatamente e guardar
+                  const reader = new FileReader();
+                  reader.onload = function() {
+                    try {
+                      window.__kreverBlobObjects[url + '_base64'] = reader.result;
+                      console.log('[Krever Injected] Blob convertido para base64, tamanho:', reader.result.length);
+                    } catch(e) {}
+                  };
+                  reader.readAsDataURL(blob);
+                  
+                  window.postMessage({ type: 'KREVER_AUDIO_BLOB', url, mimeType: blob.type, size: blob.size, hasBlob: true }, '*');
+                }
+              }
+            } catch(e) { console.warn('[Krever Injected] Erro hook', e); }
             return url;
+          };
+
+          URL.revokeObjectURL = function(url) {
+            // Não revoga imediatamente se for nosso blob, guarda antes
+            try {
+              if (window.__kreverAudioBlobs[url]) {
+                console.log('[Krever Injected] Blob URL sendo revogada, mas mantendo objeto:', url);
+                // Mantém blob mesmo após revoke
+              }
+            } catch {}
+            return origRevokeObjectURL.call(this, url);
           };
         } catch(e) { console.warn('[Krever Injected] Falha hook createObjectURL', e); }
 
-        // Tenta expor Store do WhatsApp
+        // Função para tentar pegar Store de várias formas
         function tryExposeStore() {
           try {
-            // Método 1: webpackChunk
-            if (window.webpackChunkwhatsapp_web_client) {
-              window.webpackChunkwhatsapp_web_client.push([['krever'], {}, (e) => {
-                try {
-                  for (const modId in e.m) {
-                    const mod = e(modId);
-                    if (!mod) continue;
-                    // Procura por Chat, Msg, etc
-                    if (mod.default) {
-                      if (mod.default.Chat && !window.__kreverStore?.Chat) {
-                        window.__kreverStore = window.__kreverStore || {};
-                        window.__kreverStore.Chat = mod.default.Chat;
-                        console.log('[Krever Injected] Store.Chat encontrado');
-                      }
-                      if (mod.default.Msg && !window.__kreverStore?.Msg) {
-                        window.__kreverStore = window.__kreverStore || {};
-                        window.__kreverStore.Msg = mod.default.Msg;
-                        console.log('[Krever Injected] Store.Msg encontrado');
-                      }
-                    }
-                    if (mod.Chat) {
-                      window.__kreverStore = window.__kreverStore || {};
-                      window.__kreverStore.Chat = mod.Chat;
-                    }
-                    if (mod.Msg) {
-                      window.__kreverStore = window.__kreverStore || {};
-                      window.__kreverStore.Msg = mod.Msg;
-                    }
-                  }
-                } catch(err) {}
-              }]);
+            // Método 1: window.Store
+            if (window.Store && (window.Store.Chat || window.Store.Msg)) {
+              window.__kreverStore = window.Store;
+              console.log('[Krever Injected] window.Store encontrado:', Object.keys(window.Store));
+              window.postMessage({ type: 'KREVER_STORE_READY', keys: Object.keys(window.Store), method: 'window.Store' }, '*');
+              return true;
             }
 
-            // Método 2: window.Store já existe em algumas versões
-            if (window.Store && window.Store.Chat) {
-              window.__kreverStore = window.Store;
-              console.log('[Krever Injected] window.Store já existe');
+            // Método 2: webpackChunk
+            if (window.webpackChunkwhatsapp_web_client) {
+              try {
+                window.webpackChunkwhatsapp_web_client.push([['krever_v6'], {}, (e) => {
+                  for (const modId in e.m) {
+                    try {
+                      const mod = e(modId);
+                      if (!mod) continue;
+                      const candidates = [mod, mod.default, mod.exports, mod.default?.default].filter(Boolean);
+                      for (const cand of candidates) {
+                        if (cand.Chat && cand.Msg && !window.__kreverStore) {
+                          window.__kreverStore = cand;
+                          console.log('[Krever Injected] Store encontrado via webpack (Chat+Msg)');
+                          window.postMessage({ type: 'KREVER_STORE_READY', keys: Object.keys(cand), method: 'webpack Chat+Msg' }, '*');
+                          return;
+                        }
+                        if (cand.Msg && cand.Msg.get && !window.__kreverStore?.Msg) {
+                          window.__kreverStore = window.__kreverStore || {};
+                          window.__kreverStore.Msg = cand.Msg;
+                          console.log('[Krever Injected] Store.Msg encontrado via webpack');
+                        }
+                        if (cand.Chat && cand.Chat.get && !window.__kreverStore?.Chat) {
+                          window.__kreverStore = window.__kreverStore || {};
+                          window.__kreverStore.Chat = cand.Chat;
+                        }
+                      }
+                    } catch {}
+                  }
+                }]);
+              } catch {}
             }
 
             // Método 3: require
             if (window.require) {
+              const reqNames = ['WAWebCollections', 'WAWebChatCollection', 'WAWebMsgCollection', 'Store'];
+              for (const name of reqNames) {
+                try {
+                  const mod = window.require(name);
+                  if (mod) {
+                    console.log('[Krever Injected] require(' + name + ') encontrado:', mod);
+                    window.__kreverStore = window.__kreverStore || {};
+                    window.__kreverStore[name] = mod;
+                  }
+                } catch {}
+              }
+            }
+
+            // Método 4: Procura em window
+            for (const key in window) {
               try {
-                const modules = window.require('WAWebCollections');
-                if (modules) {
-                  console.log('[Krever Injected] WAWebCollections encontrado');
-                  window.__kreverStore = window.__kreverStore || {};
-                  window.__kreverStore.Collections = modules;
+                const val = window[key];
+                if (val && typeof val === 'object' && val.Msg && val.Chat) {
+                  window.__kreverStore = val;
+                  console.log('[Krever Injected] Store encontrado em window.' + key);
+                  window.postMessage({ type: 'KREVER_STORE_READY', keys: Object.keys(val), method: 'window.' + key }, '*');
+                  break;
                 }
               } catch {}
             }
 
-            if (window.__kreverStore) {
-              console.log('[Krever Injected] Store exposto:', Object.keys(window.__kreverStore));
-              window.postMessage({ type: 'KREVER_STORE_READY', keys: Object.keys(window.__kreverStore) }, '*');
-            }
-          } catch(e) { console.warn('[Krever Injected] Erro expor Store', e); }
+          } catch(e) { console.warn('[Krever] Erro expor Store', e); }
+          return false;
         }
 
-        // Tenta expor Store várias vezes
+        // Função para pegar blob de mensagem via Store
+        window.__kreverGetMsgBlob = function(messageId) {
+          try {
+            if (!window.__kreverStore) {
+              console.log('[Krever Injected] Store não disponível para getMsgBlob');
+              return null;
+            }
+            const Msg = window.__kreverStore.Msg || window.__kreverStore.MsgCollection || window.Store?.Msg;
+            if (!Msg) {
+              console.log('[Krever Injected] Msg collection não encontrada');
+              return null;
+            }
+            
+            let msg = null;
+            try { msg = Msg.get(messageId); } catch {}
+            if (!msg) {
+              // Tenta buscar em todos os chats
+              try {
+                const chats = window.__kreverStore.Chat?.models || [];
+                for (const chat of chats) {
+                  if (chat.msgs && chat.msgs.get) {
+                    msg = chat.msgs.get(messageId);
+                    if (msg) break;
+                  }
+                }
+              } catch {}
+            }
+            
+            if (!msg) {
+              console.log('[Krever Injected] Mensagem não encontrada no Store:', messageId);
+              return null;
+            }
+
+            console.log('[Krever Injected] Mensagem encontrada:', msg);
+            
+            // Tenta pegar mediaData
+            const mediaData = msg.mediaData || msg.__x_mediaData || msg.__x_data?.mediaData;
+            console.log('[Krever Injected] mediaData:', mediaData);
+            
+            if (mediaData) {
+              // mediaBlob já descriptografado
+              if (mediaData.mediaBlob && mediaData.mediaBlob._blob) {
+                console.log('[Krever Injected] mediaBlob._blob encontrado');
+                return mediaData.mediaBlob._blob;
+              }
+              if (mediaData.mediaBlob && mediaData.mediaBlob.blob) {
+                console.log('[Krever Injected] mediaBlob.blob encontrado');
+                return mediaData.mediaBlob.blob;
+              }
+              if (mediaData.mediaBlob instanceof Blob) {
+                console.log('[Krever Injected] mediaBlob é Blob direto');
+                return mediaData.mediaBlob;
+              }
+              // URL direta
+              if (mediaData.url || mediaData.mediaBlob?.url) {
+                console.log('[Krever Injected] URL encontrada:', mediaData.url || mediaData.mediaBlob.url);
+                return { url: mediaData.url || mediaData.mediaBlob.url, needsFetch: true };
+              }
+            }
+
+            // Tenta pegar de outros lugares
+            if (msg.__x_mediaBlob) {
+              console.log('[Krever Injected] __x_mediaBlob encontrado');
+              return msg.__x_mediaBlob;
+            }
+
+            return null;
+          } catch(e) {
+            console.warn('[Krever Injected] Erro getMsgBlob', e);
+            return null;
+          }
+        };
+
+        // Escuta pedidos do content script
+        window.addEventListener('message', (event) => {
+          if (event.source !== window) return;
+          if (event.data?.type === 'KREVER_GET_MSG_BLOB') {
+            const messageId = event.data.messageId;
+            console.log('[Krever Injected] Pedido de blob para:', messageId);
+            const result = window.__kreverGetMsgBlob(messageId);
+            if (result) {
+              if (result instanceof Blob) {
+                console.log('[Krever Injected] Blob encontrado via Store, convertendo para base64');
+                const reader = new FileReader();
+                reader.onload = () => {
+                  window.postMessage({ type: 'KREVER_MSG_BLOB_RESULT', messageId, success: true, base64: reader.result, mimeType: result.type, size: result.size }, '*');
+                };
+                reader.readAsDataURL(result);
+              } else if (result.url && result.needsFetch) {
+                window.postMessage({ type: 'KREVER_MSG_BLOB_RESULT', messageId, success: true, url: result.url, needsFetch: true }, '*');
+              } else {
+                window.postMessage({ type: 'KREVER_MSG_BLOB_RESULT', messageId, success: false, error: 'Formato desconhecido' }, '*');
+              }
+            } else {
+              window.postMessage({ type: 'KREVER_MSG_BLOB_RESULT', messageId, success: false, error: 'Mensagem não encontrada no Store' }, '*');
+            }
+          }
+        });
+
         tryExposeStore();
         setTimeout(tryExposeStore, 2000);
         setTimeout(tryExposeStore, 5000);
         setTimeout(tryExposeStore, 10000);
 
-        // Captura play de áudio
         document.addEventListener('play', (e) => {
-          if (e.target && e.target.tagName === 'AUDIO') {
-            const src = e.target.src;
-            if (src) {
-              console.log('[Krever Injected] Audio play:', src);
-              window.postMessage({ type: 'KREVER_AUDIO_PLAY', src, timestamp: Date.now() }, '*');
-            }
+          if (e.target?.tagName === 'AUDIO' && e.target.src) {
+            window.postMessage({ type: 'KREVER_AUDIO_PLAY', src: e.target.src, timestamp: Date.now() }, '*');
           }
         }, true);
 
-        // Observa novos audios
-        const obs = new MutationObserver((muts) => {
-          for (const mut of muts) {
-            for (const node of mut.addedNodes) {
-              if (node.tagName === 'AUDIO' && node.src) {
-                window.postMessage({ type: 'KREVER_AUDIO_ELEMENT', src: node.src }, '*');
-              }
-              if (node.querySelectorAll) {
-                const audios = node.querySelectorAll('audio[src]');
-                audios.forEach(a => {
-                  if (a.src) window.postMessage({ type: 'KREVER_AUDIO_ELEMENT', src: a.src }, '*');
-                });
-              }
-            }
-          }
-        });
-        obs.observe(document.body, { childList: true, subtree: true });
-
-        console.log('[Krever Injected v5] Hooks prontos');
+        console.log('[Krever Injected v6] Pronto');
       })();
     `;
     (document.head || document.documentElement).appendChild(script);
@@ -151,21 +275,21 @@
     window.addEventListener('message', (event) => {
       if (event.source !== window) return;
       const data = event.data;
-      if (!data || !data.type) return;
-      
+      if (!data?.type) return;
       if (data.type === 'KREVER_AUDIO_BLOB') {
-        console.log('[Krever Content] Blob capturado:', data.url);
+        console.log('[Krever Content] Blob capturado:', data.url, data.size);
         lastAudioBlob = data;
         capturedBlobs.set(data.url, { url: data.url, timestamp: Date.now(), size: data.size });
       } else if (data.type === 'KREVER_AUDIO_PLAY') {
-        console.log('[Krever Content] Play detectado:', data.src);
         lastAudioBlob = { url: data.src, timestamp: data.timestamp };
         setTimeout(() => captureAllAudioBlobs(), 300);
-      } else if (data.type === 'KREVER_AUDIO_ELEMENT') {
-        captureAllAudioBlobs();
       } else if (data.type === 'KREVER_STORE_READY') {
-        console.log('[Krever Content] Store pronto:', data.keys);
-        storeExposed = true;
+        console.log('[Krever Content] Store pronto via', data.method, ':', data.keys);
+        storeReady = true;
+      } else if (data.type === 'KREVER_MSG_BLOB_RESULT') {
+        console.log('[Krever Content] Resultado blob via Store:', data);
+        // Será tratado por quem pediu
+        window.dispatchEvent(new CustomEvent('krever-msg-blob-result', { detail: data }));
       }
     });
   }
@@ -173,30 +297,18 @@
   function captureAllAudioBlobs() {
     const audios = qa('audio[src^="blob:"], audio[src^="https://"]');
     for (const audio of audios) {
-      const src = audio.src;
-      if (src) capturedBlobs.set(src, { element: audio, timestamp: Date.now() });
+      if (audio.src) capturedBlobs.set(audio.src, { element: audio, timestamp: Date.now() });
     }
-    const allBlob = qa('[src^="blob:"]');
-    for (const el of allBlob) {
-      if (el.src) capturedBlobs.set(el.src, { element: el, timestamp: Date.now() });
-    }
+    qa('[src^="blob:"]').forEach(el => { if (el.src) capturedBlobs.set(el.src, { element: el, timestamp: Date.now() }); });
   }
 
   function getChatName() {
-    const sels = [
-      'header span[data-testid="conversation-info-header-chat-title"]',
-      '#main header span[title]',
-      'div[data-testid="chat-info-drawer"] span[title]',
-      '#main header div[data-testid="conversation-info-header"] span',
-      'header span[title]',
-      '#main header span',
-      'header div span',
-    ];
+    const sels = ['header span[data-testid="conversation-info-header-chat-title"]', '#main header span[title]', 'header span[title]', '#main header span'];
     for (const sel of sels) {
       const el = q(sel);
       if (el) {
         const t = (el.getAttribute('title') || el.textContent || '').trim();
-        if (t && t.length > 1 && t.length < 100 && !t.toLowerCase().includes('clique')) return t;
+        if (t && t.length > 1 && t.length < 100) return t;
       }
     }
     return 'Cliente';
@@ -204,33 +316,26 @@
 
   function getChatId() {
     const name = getChatName();
-    const main = q('#main');
-    const dataId = main?.querySelector('[data-id]')?.getAttribute('data-id') || '';
+    const dataId = q('#main')?.querySelector('[data-id]')?.getAttribute('data-id') || '';
     const raw = (dataId || '') + '|' + name + '|' + location.href;
     let hash = 0;
     for (let i = 0; i < raw.length; i++) hash = ((hash << 5) - hash) + raw.charCodeAt(i);
     return Math.abs(hash).toString(16).padStart(24, '0').slice(0, 24);
   }
 
-  // ===== EXTRAÇÃO V5 - AINDA MAIS ROBUSTA =====
   function extractMessages() {
-    // Tenta encontrar container, mas se falhar usa #main ou document
     let container = q('div[data-testid="conversation-panel-messages"]') || q('#main') || document.body;
-    
     let msgElements = [];
     let strategy = '';
 
-    // Estratégia 1: message-in/out (se existir)
     const s1 = qa('div.message-in, div.message-out', container);
     if (s1.length > 0) { msgElements = s1; strategy = 'message-in/out'; }
 
-    // Estratégia 2: msg-container
     if (msgElements.length < 2) {
       const s2 = qa('div[data-testid="msg-container"]', container);
       if (s2.length > msgElements.length) { msgElements = s2; strategy = 'msg-container'; }
     }
 
-    // Estratégia 3: data-id true_/false_
     if (msgElements.length < 2) {
       const s3 = qa('div[data-id^="true_"], div[data-id^="false_"]', container);
       if (s3.length > 0) {
@@ -245,11 +350,10 @@
           }
           if (!hasAncestor) { seen.add(id); filtered.push(el); }
         }
-        if (filtered.length > msgElements.length) { msgElements = filtered; strategy = 'data-id-true/false'; }
+        if (filtered.length > msgElements.length) { msgElements = filtered; strategy = 'data-id'; }
       }
     }
 
-    // Estratégia 4: qualquer data-id em #main
     if (msgElements.length < 2) {
       const s4 = qa('#main div[data-id]', document).filter(el => {
         const id = el.getAttribute('data-id') || ''; return id.includes('_') && id.length > 10;
@@ -257,76 +361,11 @@
       if (s4.length > msgElements.length) { msgElements = s4; strategy = 'qualquer-data-id'; }
     }
 
-    // Estratégia 5: copyable-text
-    if (msgElements.length < 2) {
-      const textSpans = qa('#main .copyable-text, #main [data-testid="msg-text"]', document);
-      const parents = new Map();
-      for (const span of textSpans) {
-        let p = span.parentElement;
-        for (let i = 0; i < 10; i++) {
-          if (!p) break;
-          if (p.getAttribute && p.getAttribute('data-id')) {
-            const id = p.getAttribute('data-id');
-            if (!parents.has(id)) parents.set(id, p);
-            break;
-          }
-          if (p.classList && (p.classList.contains('message-in') || p.classList.contains('message-out'))) {
-            const id = p.getAttribute('data-id') || `parent_${parents.size}`;
-            if (!parents.has(id)) parents.set(id, p);
-            break;
-          }
-          p = p.parentElement;
-        }
-      }
-      const s5 = Array.from(parents.values());
-      if (s5.length > msgElements.length) { msgElements = s5; strategy = 'copyable-parent'; }
-    }
+    if (msgElements.length === 0) return [];
 
-    // Estratégia 6: Fallback total - pega todos os selectable-text e tenta montar
-    if (msgElements.length < 2) {
-      const allText = qa('#main span.selectable-text, #main div.copyable-text', document);
-      console.log(`[Krever] Fallback total: ${allText.length} textos encontrados`);
-      if (allText.length > 0) {
-        const map = new Map();
-        for (const el of allText) {
-          let p = el;
-          for (let i = 0; i < 12; i++) {
-            if (!p) break;
-            const id = p.getAttribute && p.getAttribute('data-id');
-            if (id && id.includes('_')) {
-              if (!map.has(id)) map.set(id, p);
-              break;
-            }
-            // Se chegou em um container com background de mensagem
-            if (p.classList && (p.classList.contains('message-in') || p.classList.contains('message-out') || p.getAttribute('data-testid') === 'msg-container')) {
-              const fakeId = p.getAttribute('data-id') || `fallback_${map.size}_${Date.now()}`;
-              if (!map.has(fakeId)) map.set(fakeId, p);
-              break;
-            }
-            p = p.parentElement;
-          }
-        }
-        msgElements = Array.from(map.values());
-        strategy = 'fallback-selectable';
-      }
-    }
-
-    if (msgElements.length === 0) {
-      console.warn('[Krever] Nenhuma mensagem encontrada após 6 estratégias');
-      console.log('[Krever] Debug:', {
-        main: !!q('#main'),
-        mainDivs: qa('#main div').length,
-        dataId: qa('[data-id]').length,
-        msgInOut: qa('div.message-in, div.message-out').length,
-        selectable: qa('#main .selectable-text').length,
-      });
-      return [];
-    }
-
-    // Deduplica
     const uniqueMap = new Map();
     for (const el of msgElements) {
-      const id = el.getAttribute('data-id') || el.querySelector('[data-id]')?.getAttribute('data-id') || `tmp_${Math.random().toString(36).slice(2)}_${uniqueMap.size}`;
+      const id = el.getAttribute('data-id') || el.querySelector('[data-id]')?.getAttribute('data-id') || `tmp_${uniqueMap.size}`;
       if (!uniqueMap.has(id)) uniqueMap.set(id, el);
     }
     msgElements = Array.from(uniqueMap.values());
@@ -346,15 +385,12 @@
         else if (dataId.startsWith('true_')) isFromMe = true;
         else if (dataId.startsWith('false_')) isFromMe = false;
         else if (el.closest('.message-out')) isFromMe = true;
-        else if (el.closest('.message-in')) isFromMe = false;
 
-        // ÁUDIO
         let hasAudio = false;
-        const audioSels = ['audio', '[data-testid="audio-play"]', '[data-testid="ptt-play"]', 'span[data-icon="ptt"]', 'span[data-icon="audio-play"]', 'div[data-testid="audio-player"]', 'div[data-testid="ptt"]', 'canvas'];
+        const audioSels = ['audio', '[data-testid="audio-play"]', '[data-testid="ptt-play"]', 'span[data-icon="ptt"]', 'div[data-testid="ptt"]', 'canvas'];
         for (const sel of audioSels) { if (el.querySelector(sel)) { hasAudio = true; break; } }
-        if (!hasAudio && (el.innerHTML.includes('data-icon="ptt"') || el.innerHTML.includes('audio-play'))) hasAudio = true;
+        if (!hasAudio && el.innerHTML.includes('ptt')) hasAudio = true;
 
-        // IMAGEM
         let hasImage = false; let imgEl = null;
         if (!hasAudio) {
           const thumb = el.querySelector('[data-testid="image-thumb"]');
@@ -391,7 +427,7 @@
           imageInfo = { src, mimeType: 'image/jpeg', analysisStatus: 'pending', sourceId: dataId };
         } else {
           let foundText = '';
-          const textSels = ['span[data-testid="msg-text"]', 'div.copyable-text span.selectable-text', '.copyable-text', 'span.selectable-text'];
+          const textSels = ['span[data-testid="msg-text"]', 'div.copyable-text span.selectable-text', '.copyable-text'];
           for (const sel of textSels) {
             const tEl = el.querySelector(sel);
             if (tEl && tEl.innerText && tEl.innerText.trim()) {
@@ -401,9 +437,8 @@
           }
           if (!foundText) {
             const clone = el.cloneNode(true);
-            qa('[data-testid="msg-meta"], [data-testid="msg-info"], [data-icon], button', clone).forEach(m => m.remove());
-            foundText = (clone.innerText || '').trim();
-            foundText = foundText.split('\n').filter(l => {
+            qa('[data-testid="msg-meta"], [data-icon], button', clone).forEach(m => m.remove());
+            foundText = (clone.innerText || '').trim().split('\n').filter(l => {
               const t = l.trim(); if (!t) return false;
               if (/^\d{1,2}:\d{2}$/.test(t)) return false;
               if (/^[✓✔]+$/.test(t)) return false; return true;
@@ -419,20 +454,17 @@
           if (match) { const [, hh, mm, dd, MM, yyyy] = match; const d = new Date(`${yyyy}-${MM}-${dd}T${hh}:${mm}:00`); if (!isNaN(d)) timestamp = d.toISOString(); }
         }
 
-        const sender = isFromMe ? 'Você' : getChatName();
-
         entries.push({
-          id: dataId, sourceId: dataId, timestamp, fromMe: isFromMe, sender, type, text,
+          id: dataId, sourceId: dataId, timestamp, fromMe: isFromMe, sender: isFromMe ? 'Você' : getChatName(), type, text,
           conversationName: getChatName(), jid: getChatId(), audio: audioInfo, image: imageInfo
         });
       } catch (e) { console.warn('[Krever] Erro msg', e); }
     }
 
-    console.log(`[Krever v5] ${entries.length} msgs via ${strategy} (${entries.filter(e=>e.type==='audio').length} áudio)`);
     return entries;
   }
 
-  // ===== PAINEL LATERAL =====
+  // ===== PAINEL =====
   function createPanel() {
     if (document.getElementById('krever-panel')) return q('#krever-panel');
     const panel = document.createElement('div');
@@ -449,11 +481,19 @@
           <button id="krever-panel-close" title="Fechar" style="width:28px; height:28px; border:1px solid #243a58; background:#101c2f; color:#e8f0ff; border-radius:6px; cursor:pointer;">✕</button>
         </div>
       </div>
-      <div id="krever-panel-stats" style="padding:8px 12px; background:#101c2f; border-bottom:1px solid #243a58; font-size:10px; color:#9cafc9; display:flex; gap:10px;">
+      <div id="krever-panel-stats" style="padding:8px 12px; background:#101c2f; border-bottom:1px solid #243a58; font-size:10px; color:#9cafc9; display:flex; gap:8px; flex-wrap:wrap;">
         <span id="krever-stat-msgs">0 msgs</span>
         <span id="krever-stat-audios">0 áudios</span>
-        <span id="krever-stat-images">0 imgs</span>
         <span id="krever-stat-blobs" style="color:#4de0d2;">0 blobs</span>
+        <span id="krever-stat-store" style="color:${storeReady ? '#4ade80' : '#ff7b89'};">Store: ${storeReady ? 'OK' : 'NÃO'}</span>
+      </div>
+      <div style="padding:8px; background:#0f1f2f; border-bottom:1px solid #243a58;">
+        <p style="font-size:10px; color:#f6c863; margin-bottom:6px;">💡 Áudio não capturou? Arraste arquivo de áudio aqui ou use botão direito no áudio > Salvar como e arraste:</p>
+        <div id="krever-drop-zone" style="border:2px dashed #4de0d2; border-radius:8px; padding:12px; text-align:center; font-size:11px; color:#9cafc9; cursor:pointer; background:rgba(77,224,210,0.05);">
+          📁 Arraste áudios aqui ou clique para selecionar<br>
+          <span style="font-size:9px;">Suporta .ogg, .mp3, .m4a, .wav</span>
+          <input type="file" id="krever-file-input" accept="audio/*" multiple style="display:none;">
+        </div>
       </div>
       <div id="krever-panel-entries" style="flex:1; overflow-y:auto; padding:10px; display:flex; flex-direction:column; gap:8px; background:rgba(5,13,25,0.6);"></div>
       <div id="krever-panel-actions" style="padding:10px; border-top:1px solid #243a58; background:#101c2f;">
@@ -477,12 +517,7 @@
 
     const style = document.createElement('style');
     style.textContent = `
-      #krever-panel {
-        position: fixed; top: 0; right: 0; width: 380px; height: 100vh;
-        background: #08111f; border-left: 2px solid #243a58; z-index: 999999;
-        display: flex; flex-direction: column; font-family: Inter, sans-serif; color: #e8f0ff;
-        box-shadow: -10px 0 30px rgba(0,0,0,0.4); transform: translateX(100%); transition: transform 0.3s ease;
-      }
+      #krever-panel { position: fixed; top: 0; right: 0; width: 400px; height: 100vh; background: #08111f; border-left: 2px solid #243a58; z-index: 999999; display: flex; flex-direction: column; font-family: Inter, sans-serif; color: #e8f0ff; box-shadow: -10px 0 30px rgba(0,0,0,0.4); transform: translateX(100%); transition: transform 0.3s ease; }
       #krever-panel.open { transform: translateX(0); }
       #krever-panel-header { padding: 14px 12px 10px; background: linear-gradient(135deg, #101c2f, #14233a); border-bottom: 1px solid #243a58; display: flex; justify-content: space-between; }
       .krever-btn { border-radius: 8px; font-weight: 700; cursor: pointer; border: 1px solid #243a58; color: #e8f0ff; background: transparent; }
@@ -495,7 +530,7 @@
       .krever-msg-text { white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
       .krever-audio-badge { background: rgba(77,224,210,0.15); color: #4de0d2; font-size: 9px; font-weight: 800; padding: 3px 8px; border-radius: 12px; display: inline-flex; gap: 4px; margin-bottom: 4px; border: 1px solid rgba(77,224,210,0.2); }
       .krever-transcribe-btn { background: #4de0d2; color: #06111f; border: none; padding: 5px 10px; border-radius: 6px; font-size: 10px; font-weight: 800; cursor: pointer; margin-top: 5px; display: inline-block; }
-      .krever-transcribe-btn:hover { filter: brightness(1.1); }
+      #krever-drop-zone.dragover { background: rgba(77,224,210,0.15) !important; border-color: #4de0d2 !important; transform: scale(1.02); }
     `;
     document.head.appendChild(style);
     document.body.appendChild(panel);
@@ -513,7 +548,78 @@
     panel.querySelector('#krever-btn-gemini').onclick = () => prepareGeminiInPanel();
     panel.querySelector('#krever-btn-summarize').onclick = () => summarizeInPanel();
 
+    // Drop zone para áudio manual
+    const dropZone = panel.querySelector('#krever-drop-zone');
+    const fileInput = panel.querySelector('#krever-file-input');
+    
+    dropZone.onclick = () => fileInput.click();
+    
+    dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('dragover'); };
+    dropZone.ondragleave = () => dropZone.classList.remove('dragover');
+    dropZone.ondrop = async (e) => {
+      e.preventDefault(); dropZone.classList.remove('dragover');
+      const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('audio/') || f.name.match(/\.(ogg|mp3|m4a|wav|opus)$/i));
+      if (files.length) await handleManualAudioFiles(files);
+    };
+    
+    fileInput.onchange = async (e) => {
+      const files = Array.from(e.target.files);
+      if (files.length) await handleManualAudioFiles(files);
+    };
+
     return panel;
+  }
+
+  async function handleManualAudioFiles(files) {
+    const panel = document.getElementById('krever-panel');
+    const output = panel.querySelector('#krever-summary-output');
+    output.textContent = `Transcrevendo ${files.length} arquivo(s) manual(is)...`;
+
+    let combinedText = '';
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      output.textContent = `Transcrevendo ${i+1}/${files.length}: ${file.name}...`;
+      try {
+        const buf = await file.arrayBuffer();
+        const res = await chrome.runtime.sendMessage({
+          type: 'TRANSCRIBE_AUDIO',
+          blobData: Array.from(new Uint8Array(buf)),
+          mimeType: file.type || 'audio/ogg',
+          fileName: file.name,
+          conversationId: getChatId(),
+          messageId: `manual_${Date.now()}_${i}`
+        });
+        if (res.success) {
+          combinedText += `\n[Áudio ${file.name} transcrito] ${res.result.raw || res.result.text}\n`;
+        }
+      } catch (e) {
+        console.warn('Erro transcrição manual', e);
+      }
+    }
+
+    if (combinedText) {
+      // Adiciona como mensagem na conversa
+      const entries = extractMessages();
+      entries.push({
+        id: `manual_${Date.now()}`,
+        sourceId: `manual_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        fromMe: false,
+        sender: 'Áudios Manuais',
+        type: 'text',
+        text: combinedText,
+        conversationName: getChatName(),
+        jid: getChatId()
+      });
+      chrome.runtime.sendMessage({
+        type: 'CONVERSATION_UPDATE',
+        payload: { conversationId: getChatId(), conversationName: getChatName(), entries }
+      });
+      output.textContent = `Transcrição manual concluída:\n${combinedText}\n\nAgora clique em Gerar Resumo para incluir no resumo.`;
+      refreshPanel();
+    } else {
+      output.textContent = 'Falha na transcrição manual';
+    }
   }
 
   function togglePanel(force) {
@@ -528,8 +634,9 @@
     panel.querySelector('#krever-panel-chat').textContent = getChatName();
     panel.querySelector('#krever-stat-msgs').textContent = `${entries.length} msgs`;
     panel.querySelector('#krever-stat-audios').textContent = `${entries.filter(e=>e.type==='audio').length} áudios`;
-    panel.querySelector('#krever-stat-images').textContent = `${entries.filter(e=>e.type==='image').length} imgs`;
     panel.querySelector('#krever-stat-blobs').textContent = `${capturedBlobs.size} blobs`;
+    const storeEl = panel.querySelector('#krever-stat-store');
+    if (storeEl) { storeEl.textContent = `Store: ${storeReady ? 'OK' : 'NÃO'}`; storeEl.style.color = storeReady ? '#4ade80' : '#ff7b89'; }
 
     const container = panel.querySelector('#krever-panel-entries');
     container.innerHTML = '';
@@ -539,26 +646,20 @@
       const div = document.createElement('div');
       div.className = `krever-msg ${entry.fromMe ? 'own' : ''}`;
       div.dataset.messageId = entry.sourceId;
-
-      const meta = document.createElement('div');
-      meta.className = 'krever-msg-meta';
+      const meta = document.createElement('div'); meta.className = 'krever-msg-meta';
       const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
-      meta.textContent = `${entry.fromMe ? 'Você' : entry.sender} • ${time}`;
-      div.appendChild(meta);
+      meta.textContent = `${entry.fromMe ? 'Você' : entry.sender} • ${time}`; div.appendChild(meta);
 
       if (entry.type === 'audio') {
         const badge = document.createElement('div'); badge.className = 'krever-audio-badge';
-        badge.textContent = entry.audio?.transcriptionStatus === 'completed' ? '🎙️ Transcrito' : '🎙️ Áudio';
-        div.appendChild(badge);
-        const text = document.createElement('div'); text.className = 'krever-msg-text';
-        text.textContent = entry.text || 'Áudio pendente'; div.appendChild(text);
+        badge.textContent = entry.audio?.transcriptionStatus === 'completed' ? '🎙️ Transcrito' : '🎙️ Áudio'; div.appendChild(badge);
+        const text = document.createElement('div'); text.className = 'krever-msg-text'; text.textContent = entry.text || 'Áudio pendente'; div.appendChild(text);
         if (entry.audio?.transcriptionStatus !== 'completed') {
           const btn = document.createElement('button'); btn.className = 'krever-transcribe-btn';
           btn.textContent = '▶️ Transcrever este áudio'; btn.onclick = () => transcribeSingleAudio(entry.sourceId, btn); div.appendChild(btn);
         }
       } else if (entry.type === 'image') {
-        const badge = document.createElement('div'); badge.className = 'krever-audio-badge';
-        badge.style.background = 'rgba(196,168,255,0.15)'; badge.style.color = '#c4a8ff';
+        const badge = document.createElement('div'); badge.className = 'krever-audio-badge'; badge.style.background = 'rgba(196,168,255,0.15)'; badge.style.color = '#c4a8ff';
         badge.textContent = '🖼️ Imagem'; div.appendChild(badge);
         const text = document.createElement('div'); text.className = 'krever-msg-text'; text.textContent = entry.text || '[Imagem]'; div.appendChild(text);
         if (entry.image?.analysisStatus !== 'completed') {
@@ -573,33 +674,25 @@
     container.scrollTop = container.scrollHeight;
   }
 
-  // ===== TRANSCRIÇÃO COM AUTO-PLAY =====
   async function transcribeSingleAudio(messageId, btn) {
     if (!messageId) return;
     const orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ Buscando...';
     try {
       captureAllAudioBlobs();
       let blob = await getAudioBlob(messageId);
-
-      // Se não achou, tenta auto-play mutado
+      if (!blob) { btn.textContent = '⏳ Auto-play...'; blob = await getAudioBlobWithAutoPlay(messageId); }
       if (!blob) {
-        console.log('[Krever] Blob não encontrado, tentando auto-play mutado...');
-        btn.textContent = '⏳ Auto-play...';
-        blob = await getAudioBlobWithAutoPlay(messageId);
+        // Tenta via Store
+        btn.textContent = '⏳ Tentando via Store...';
+        blob = await getAudioBlobViaStore(messageId);
       }
-
-      if (!blob) throw new Error('Não foi possível capturar áudio. Método alternativo: clique com botão direito no áudio > Salvar como, depois arraste o arquivo para o painel de resumo manual na extensão.');
+      if (!blob) throw new Error('Não foi possível capturar. Use o método manual: arraste o arquivo de áudio na área pontilhada acima. Para baixar áudio: clique com botão direito no áudio > Salvar áudio como...');
 
       btn.textContent = '⏳ Transcrevendo...';
-      console.log(`[Krever] Blob: ${blob.size} bytes`);
       const buf = await blob.arrayBuffer();
       const res = await chrome.runtime.sendMessage({
-        type: 'TRANSCRIBE_AUDIO',
-        blobData: Array.from(new Uint8Array(buf)),
-        mimeType: blob.type || 'audio/ogg',
-        fileName: `audio_${messageId}.ogg`,
-        conversationId: getChatId(),
-        messageId
+        type: 'TRANSCRIBE_AUDIO', blobData: Array.from(new Uint8Array(buf)), mimeType: blob.type || 'audio/ogg',
+        fileName: `audio_${messageId}.ogg`, conversationId: getChatId(), messageId
       });
 
       if (res.success) {
@@ -608,10 +701,43 @@
         if (msgDiv) msgDiv.textContent = res.result.text;
         setTimeout(() => refreshPanel(), 800);
       } else throw new Error(res.error);
-    } catch (e) {
-      console.error(e); btn.textContent = '❌ Erro'; alert(`Erro: ${e.message}`); setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000); return;
-    }
+    } catch (e) { console.error(e); btn.textContent = '❌ Erro'; alert(`Erro: ${e.message}`); setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2500); return; }
     btn.disabled = false;
+  }
+
+  async function getAudioBlobViaStore(messageId) {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(null), 4000);
+      
+      const handler = (event) => {
+        if (event.detail?.messageId === messageId) {
+          window.removeEventListener('krever-msg-blob-result', handler);
+          clearTimeout(timeout);
+          const detail = event.detail;
+          if (detail.success && detail.base64) {
+            try {
+              // Converte base64 para blob
+              const base64Data = detail.base64.split(',')[1] || detail.base64;
+              const mimeType = detail.mimeType || 'audio/ogg';
+              const binary = atob(base64Data);
+              const bytes = new Uint8Array(binary.length);
+              for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+              const blob = new Blob([bytes], { type: mimeType });
+              console.log('[Krever] Blob obtido via Store:', blob.size);
+              resolve(blob);
+            } catch (e) {
+              console.warn('[Krever] Erro converter base64 Store', e);
+              resolve(null);
+            }
+          } else {
+            resolve(null);
+          }
+        }
+      };
+      
+      window.addEventListener('krever-msg-blob-result', handler);
+      window.postMessage({ type: 'KREVER_GET_MSG_BLOB', messageId }, '*');
+    });
   }
 
   async function getAudioBlobWithAutoPlay(messageId) {
@@ -620,53 +746,39 @@
     try { msgEl = container.querySelector(`div[data-id="${CSS.escape(messageId)}"]`); } catch { msgEl = qa('[data-id]', container).find(el => el.getAttribute('data-id') === messageId); }
     if (!msgEl) return null;
 
-    // Procura botão play
-    const playSelectors = ['[data-testid="audio-play"]', '[data-testid="ptt-play"]', 'button[aria-label*="Reproduzir"]', 'span[data-icon="ptt"]', 'span[data-icon="audio-play"]'];
+    const playSelectors = ['[data-testid="audio-play"]', '[data-testid="ptt-play"]', 'button[aria-label*="Reproduzir"]', 'span[data-icon="ptt"]'];
     let playBtn = null;
     for (const sel of playSelectors) { playBtn = msgEl.querySelector(sel); if (playBtn) break; }
     
-    // Procura audio element
     let audioEl = msgEl.querySelector('audio');
     
-    // Se achou audio mas sem src blob, tenta dar play mutado para gerar blob
     if (audioEl) {
       try {
-        console.log('[Krever] Tentando auto-play mutado para gerar blob...');
-        const wasMuted = audioEl.muted;
-        const wasVolume = audioEl.volume;
-        audioEl.muted = true;
-        audioEl.volume = 0;
-        await audioEl.play();
-        await new Promise(r => setTimeout(r, 1200));
-        // Captura blob
+        console.log('[Krever] Auto-play mutado...');
+        const wasMuted = audioEl.muted; const wasVolume = audioEl.volume;
+        audioEl.muted = true; audioEl.volume = 0;
+        await audioEl.play(); await new Promise(r => setTimeout(r, 1500));
         captureAllAudioBlobs();
         let blob = await getAudioBlob(messageId);
         if (!blob && audioEl.src && audioEl.src.startsWith('blob:')) {
           try { const res = await fetch(audioEl.src); blob = await res.blob(); } catch {}
         }
-        audioEl.pause();
-        audioEl.muted = wasMuted;
-        audioEl.volume = wasVolume;
+        audioEl.pause(); audioEl.muted = wasMuted; audioEl.volume = wasVolume;
         if (blob) return blob;
       } catch (e) { console.warn('[Krever] Auto-play falhou', e); }
     }
 
-    // Se tem botão play, clica nele mutado
     if (playBtn) {
       try {
-        console.log('[Krever] Clicando play button mutado...');
-        // Muta todos os audios antes
+        console.log('[Krever] Clicando play mutado...');
         qa('audio').forEach(a => { a.muted = true; a.volume = 0; });
-        playBtn.click();
-        await new Promise(r => setTimeout(r, 1500));
+        playBtn.click(); await new Promise(r => setTimeout(r, 1800));
         captureAllAudioBlobs();
         const blob = await getAudioBlob(messageId);
-        // Pausa todos
         qa('audio').forEach(a => { try { a.pause(); } catch {} });
         if (blob) return blob;
       } catch (e) { console.warn('[Krever] Click play falhou', e); }
     }
-
     return null;
   }
 
@@ -691,7 +803,7 @@
   async function transcribeAllInPanel() {
     const entries = extractMessages().filter(e => e.type === 'audio');
     if (!entries.length) return alert('Nenhum áudio');
-    if (!confirm(`Transcrever ${entries.length} áudios automaticamente? O sistema vai dar play mutado em cada um para capturar.`)) return;
+    if (!confirm(`Transcrever ${entries.length} áudios automaticamente? Vai dar play mutado em cada um.`)) return;
     const btn = document.getElementById('krever-btn-transcribe-all'); btn.disabled = true;
     let success = 0, fail = 0;
     for (let i = 0; i < entries.length; i++) {
@@ -699,6 +811,7 @@
       try {
         let blob = await getAudioBlob(entries[i].sourceId);
         if (!blob) blob = await getAudioBlobWithAutoPlay(entries[i].sourceId);
+        if (!blob) blob = await getAudioBlobViaStore(entries[i].sourceId);
         if (!blob) { fail++; continue; }
         const buf = await blob.arrayBuffer();
         const res = await chrome.runtime.sendMessage({
@@ -710,7 +823,8 @@
       await new Promise(r => setTimeout(r, 1500));
     }
     btn.disabled = false; btn.textContent = '🎙️ Todos áudios';
-    alert(`Transcrição: ${success} ok, ${fail} falha`); refreshPanel();
+    alert(`Transcrição: ${success} ok, ${fail} falha. Se falhou muito, use método manual: arraste arquivos de áudio na área pontilhada.`);
+    refreshPanel();
   }
 
   async function analyzeAllInPanel() {
@@ -762,9 +876,9 @@
       const config = await chrome.runtime.sendMessage({ type: 'GET_CONFIG' });
       const prompt = `Analise o arquivo TXT que vou anexar. Ele contém o histórico de uma conversa de consórcio.\n\n${config.config.instructions || ''}`;
       await navigator.clipboard.writeText(prompt);
-      alert(`TXT baixado e prompt copiado! Abra gemini.google.com, anexe o TXT e cole.`);
+      alert(`TXT baixado e prompt copiado!`);
       window.open(config.config.geminiChatUrl || 'https://gemini.google.com/app', '_blank');
-    } catch { alert('TXT baixado. Copie prompt manualmente.'); }
+    } catch { alert('TXT baixado.'); }
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
@@ -790,7 +904,7 @@
     const btn = document.createElement('button');
     btn.id = 'krever-floating-btn';
     btn.textContent = '📋 Resumidor';
-    btn.title = 'Abrir painel Krever Resumidor - clique para ver conversa organizada';
+    btn.title = 'Abrir painel Krever - conversa organizada com transcrição manual';
     btn.style.cssText = `margin-left:12px;padding:6px 14px;background:linear-gradient(135deg,#4de0d2,#76a9ff);color:#06111f;border:none;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,0.2);`;
     btn.onclick = () => togglePanel();
     header.appendChild(btn);
@@ -833,34 +947,30 @@
       } else if (msg.type === 'GET_AUDIO_BLOB') {
         captureAllAudioBlobs();
         let blob = await getAudioBlob(msg.messageId);
-        if (!blob) {
-          console.log('[Krever] Tentando auto-play para', msg.messageId);
-          blob = await getAudioBlobWithAutoPlay(msg.messageId);
-        }
+        if (!blob) blob = await getAudioBlobWithAutoPlay(msg.messageId);
+        if (!blob) blob = await getAudioBlobViaStore(msg.messageId);
         if (blob) {
           const buf = await blob.arrayBuffer();
           sendResponse({ success: true, data: Array.from(new Uint8Array(buf)), mimeType: blob.type, size: blob.size });
         } else {
-          sendResponse({ success: false, error: 'Blob não encontrado. O WhatsApp Web só libera o áudio após 1 play. Clique no play do áudio no WhatsApp, deixe tocar 1s e tente novamente. Se falhar, use método alternativo: botão direito no áudio > Salvar como e arraste no resumo manual.' });
+          sendResponse({ success: false, error: 'Não foi possível capturar áudio automaticamente. MÉTODO MANUAL 100% FUNCIONAL: 1) Clique com botão direito no áudio no WhatsApp > Salvar áudio como... 2) Arraste o arquivo salvo para a área pontilhada no painel Resumidor (dentro do WhatsApp) ou use o popup > arraste áudios.' });
         }
       } else if (msg.type === 'GET_IMAGE_BLOB') {
         sendResponse(await getImageBlob(msg.messageId, msg.src));
       } else if (msg.type === 'PING') {
         const entries = extractMessages();
-        sendResponse({ ok: true, chat: getChatName(), messages: entries.length, audios: entries.filter(e=>e.type==='audio').length, images: entries.filter(e=>e.type==='image').length, blobs: capturedBlobs.size, panelOpen });
+        sendResponse({ ok: true, chat: getChatName(), messages: entries.length, audios: entries.filter(e=>e.type==='audio').length, images: entries.filter(e=>e.type==='image').length, blobs: capturedBlobs.size, store: storeReady, panelOpen });
       } else if (msg.type === 'DEBUG_DOM') {
         sendResponse({
           hasMain: !!q('#main'),
           mainDivs: qa('#main div').length,
           dataIds: qa('[data-id]').length,
           messageInOut: qa('div.message-in, div.message-out').length,
-          msgContainer: qa('div[data-testid="msg-container"]').length,
-          trueFalse: qa('div[data-id^="true_"], div[data-id^="false_"]').length,
-          copyable: qa('#main .copyable-text').length,
           audioElements: qa('audio').length,
           blobAudios: qa('audio[src^="blob:"]').length,
           capturedBlobs: capturedBlobs.size,
           lastBlob: lastAudioBlob,
+          storeReady,
           chatName: getChatName(),
         });
       } else if (msg.type === 'TOGGLE_PANEL') {
@@ -896,7 +1006,6 @@
     const container = q('#main'); if (!container) return null;
     let msgEl = null;
     try { msgEl = container.querySelector(`div[data-id="${CSS.escape(messageId)}"]`); } catch { msgEl = qa('[data-id]', container).find(el => el.getAttribute('data-id') === messageId); }
-    if (!msgEl) msgEl = qa('div.message-in, div.message-out', container).find(el => el.querySelector(`[data-id="${messageId}"]`));
     if (msgEl) {
       const audioEl = msgEl.querySelector('audio');
       if (audioEl && audioEl.src && audioEl.src.startsWith('blob:')) {
@@ -907,7 +1016,6 @@
         try { const res = await fetch(el.src); const blob = await res.blob(); if (blob.size > 100) return blob; } catch {}
       }
     }
-    // Fallback global
     const allAudioBlobs = qa('audio[src^="blob:"]');
     for (const audio of allAudioBlobs) {
       if (!audio.paused) {
@@ -943,12 +1051,12 @@
   }
 
   function init() {
-    console.log('[Krever] Iniciando v5...');
+    console.log('[Krever] Iniciando v6...');
     injectHelpers();
     const check = setInterval(() => {
       if (q('#main') || q('div[data-testid="chat-list"]')) {
         clearInterval(check);
-        console.log('[Krever] WhatsApp detectado v5');
+        console.log('[Krever] WhatsApp detectado v6');
         createPanel();
         startObserver();
         setInterval(injectFloatingButton, 3000);

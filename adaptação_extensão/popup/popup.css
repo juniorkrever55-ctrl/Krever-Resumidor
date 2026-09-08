@@ -386,3 +386,20 @@ footer {
 }
 
 .small { font-size: 10px; color: var(--muted); margin: 4px 0; }
+
+#drop-zone {
+  transition: all 0.2s ease;
+}
+#drop-zone.dragover {
+  background: rgba(77,224,210,0.15) !important;
+  border-color: #4de0d2 !important;
+  transform: scale(1.02);
+}
+
+#krever-drop-zone {
+  transition: all 0.2s ease;
+}
+#krever-drop-zone.dragover {
+  background: rgba(77,224,210,0.15) !important;
+  border-color: #4de0d2 !important;
+}
