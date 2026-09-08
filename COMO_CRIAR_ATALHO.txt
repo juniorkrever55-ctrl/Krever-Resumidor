@@ -1,0 +1,54 @@
+COMO CRIAR ATALHO NA ÁREA DE TRABALHO - KREVER RESUMIDOR
+===========================================================
+
+MÉTODO 1 - MAIS FÁCIL (com janela):
+-----------------------------------
+1. Na pasta do projeto, clique com botão direito em "iniciar.bat" > Enviar para > Área de trabalho (criar atalho)
+2. Na Área de Trabalho, clique direito no atalho > Propriedades
+3. Em "Executar", escolha "Maximizado" ou "Minimizado"
+4. Clique em "Alterar ícone" e escolha um ícone (pode usar o icon128.png da extensão)
+5. Pronto! Duplo clique inicia o servidor
+
+MÉTODO 2 - OCULTO (sem janela preta):
+-------------------------------------
+1. Envie "iniciar-oculto.vbs" para Área de Trabalho (criar atalho)
+2. Duplo clique inicia em segundo plano
+3. Para parar: Ctrl+Shift+Esc > Gerenciador de Tarefas > Finalize "Node.js"
+
+MÉTODO 3 - INICIAR COM O WINDOWS (automático ao ligar PC):
+----------------------------------------------------------
+1. Pressione Win+R, digite: shell:startup  (abre pasta Inicializar)
+2. Copie o atalho do iniciar.bat ou iniciar-oculto.vbs para dentro dessa pasta
+3. Agora sempre que ligar o PC, o Krever inicia sozinho
+4. No .env, deixe: OPEN_BROWSER=true  e  PORT=3000
+
+MÉTODO 4 - SERVIÇO DO WINDOWS (profissional, roda mesmo sem login):
+------------------------------------------------------------------
+1. Instale PM2 global: npm install -g pm2
+2. No terminal da pasta do projeto:
+   pm2 start index.js --name krever
+   pm2 save
+   pm2 startup
+   (ele vai te dar um comando para colar, copie e cole)
+3. Agora roda como serviço, reinicia sozinho se cair
+
+MÉTODO 5 - ATALHO MANUAL (sem usar meus arquivos):
+-------------------------------------------------
+1. Área de Trabalho > botão direito > Novo > Atalho
+2. No destino, cole:
+   cmd /c cd /d "C:\caminho\para\Krever-Resumidor" && npm start
+   (ajuste o caminho para onde está seu projeto)
+3. Nome: Krever Resumidor
+4. Avançar > Concluir
+
+DICAS:
+------
+- Deixe no .env: OPEN_BROWSER=true para abrir Chrome automático
+- Se quiser mudar porta: PORT=3000 no .env
+- Para ver logs quando roda oculto: acesse http://localhost:3000/api/health
+- Se der erro de permissão no .bat, clique direito > Executar como administrador
+
+DESINSTALAR ATALHO:
+-------------------
+Só apagar o atalho da Área de Trabalho ou da pasta shell:startup
+O sistema original continua intacto em C:\seu\projeto
