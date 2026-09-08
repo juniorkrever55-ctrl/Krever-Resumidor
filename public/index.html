@@ -547,10 +547,10 @@ REGRAS:
 
     async function prepareForGemini() {
       if (!state.selectedConversationId) return;
-      window.open(state.geminiChatUrl, '_blank', 'noopener');
-      downloadConversationTxt();
       const extracted = `Dados detectados localmente:\n- CPF: ${elements.fieldCpf.value || 'não detectado'}\n- CNPJ: ${elements.fieldCnpj.value || 'não detectado'}\n- Renda: ${elements.fieldRenda.value || 'não detectado'}\n- Carta: ${elements.fieldCarta.value || 'não detectado'}\n- Parcela: ${elements.fieldParcela.value || 'não detectado'}\n- Lance próprio: ${elements.fieldLance.value || 'não detectado'}\n- Prazo: ${elements.fieldPrazo.value || 'não detectado'}\n- Profissão: ${elements.fieldProfissao.value || 'não detectado'}\n\n`;
       const geminiPrompt = `${extracted}Analise o arquivo TXT que vou anexar. Ele contém o histórico de uma conversa de consórcio.\n\n${elements.instructions.value}`;
+
+      // Copia primeiro (precisa ser síncrono no clique pra não perder permissão)
       try {
         if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(geminiPrompt);
         else {
@@ -559,9 +559,21 @@ REGRAS:
           temporary.style.position = 'fixed'; temporary.style.opacity = '0';
           document.body.append(temporary); temporary.select(); document.execCommand('copy'); temporary.remove();
         }
-        elements.conversationInfo.textContent = 'TXT + dados locais + prompt copiados. No Gemini, anexe o TXT e cole.';
+      } catch {}
+
+      // Baixa TXT
+      downloadConversationTxt();
+
+      // Redirecionamento automático - tenta nova aba, se bloqueado abre na mesma
+      elements.conversationInfo.textContent = 'TXT baixado e prompt copiado. Redirecionando para o Gemini...';
+      try {
+        const win = window.open(state.geminiChatUrl, '_blank', 'noopener');
+        if (!win || win.closed || typeof win.closed === 'undefined') {
+          // Popup bloqueado - redireciona na mesma aba após 800ms
+          setTimeout(() => { window.location.href = state.geminiChatUrl; }, 800);
+        }
       } catch {
-        elements.conversationInfo.textContent = 'TXT baixado. No Gemini, anexe e copie o prompt manualmente.';
+        window.location.href = state.geminiChatUrl;
       }
     }
 
