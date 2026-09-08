@@ -1,0 +1,53 @@
+KREVER RESUMIDOR - EXTENSÃO CHROME
+====================================
+
+PASSO A PASSO INSTALAÇÃO:
+
+1. Abra o Chrome e vá em: chrome://extensions/
+2. No canto superior direito, ative "Modo do desenvolvedor"
+3. Clique em "Carregar sem compactação"
+4. Selecione a pasta: adaptação_extensão (esta pasta)
+5. A extensão vai aparecer na lista como "Krever Resumidor - Consórcio"
+6. Clique no ícone de quebra-cabeça (extensões) e fixe o Krever
+7. Clique no ícone Krever > ícone engrenagem (⚙️) para abrir configurações
+8. Cole sua GROQ_API_KEY (pegue em https://console.groq.com/keys)
+9. Clique em "Salvar Configurações" e teste com "Testar Groq"
+10. Abra https://web.whatsapp.com, selecione uma conversa
+11. Clique no ícone Krever novamente - sua conversa já deve aparecer
+
+FUNCIONALIDADES:
+
+- Conversa Atual: lê automaticamente a conversa aberta no WhatsApp Web
+- Buscar 50 anteriores: faz scroll automático pra cima pra carregar histórico
+- Transcrever áudios: pega o áudio do WhatsApp e manda pra Groq Whisper
+- Analisar imagens: manda simulações pra Groq Vision
+- Estimar tokens: calcula custo antes de resumir
+- Gerar Resumo: usa seu prompt original, Groq ou Ollama local
+- Exportar TXT: baixa conversa completa em .txt
+- Preparar Gemini: baixa TXT + copia prompt + abre Gemini (você só anexa e cola)
+
+DIFERENÇA DO SISTEMA NODE ORIGINAL:
+
+Original usava Baileys com QR próprio. Extensão usa o WhatsApp Web já logado,
+então não precisa de QR separado. Todo o resto (prompt, modelos, export, Gemini)
+é idêntico.
+
+OLLAMA LOCAL (OPCIONAL):
+
+1. Instale Ollama: https://ollama.com
+2. Rode no terminal: ollama pull llama3.2:3b
+3. Deixe rodando: ollama serve
+4. Na extensão, selecione motor "Ollama (local)" no popup
+
+PUBLICAR NA CHROME WEB STORE:
+
+1. Zipe a pasta: selecione todos arquivos dentro de adaptação_extensão e compacte
+2. Vá em https://chrome.google.com/webstore/devconsole
+3. Crie novo item e faça upload do zip
+
+SUPORTE:
+
+Se a extensão não detectar mensagens:
+- Recarregue o WhatsApp Web (F5)
+- Verifique se está em https://web.whatsapp.com (não no app desktop)
+- Abra o console do WhatsApp (F12) e veja se aparece "[Krever] Content script carregado"

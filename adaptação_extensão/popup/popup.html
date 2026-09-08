@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Krever Resumidor</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div>
+        <p class="eyebrow">Assistente de consórcio</p>
+        <h1>Krever Resumidor</h1>
+      </div>
+      <div class="header-actions">
+        <button id="open-options" title="Configurações">⚙️</button>
+        <button id="open-whatsapp" title="Abrir WhatsApp Web">💬</button>
+      </div>
+    </header>
+
+    <div class="status-bar">
+      <span class="dot" id="status-dot"></span>
+      <span id="status-text">Verificando WhatsApp...</span>
+      <button id="refresh-status" class="small-btn">↻</button>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="current">Conversa Atual</button>
+      <button class="tab" data-tab="saved">Salvas</button>
+      <button class="tab" data-tab="manual">Manual</button>
+    </div>
+
+    <!-- TAB: Conversa Atual -->
+    <div class="tab-content active" id="tab-current">
+      <div class="conversation-header">
+        <h2 id="current-name">Nenhuma conversa detectada</h2>
+        <p id="current-info">Abra o WhatsApp Web e selecione uma conversa</p>
+        <div class="actions">
+          <button id="btn-scroll-history" class="btn secondary small">⬆️ Buscar 50 anteriores</button>
+          <button id="btn-refresh-current" class="btn secondary small">↻ Atualizar</button>
+          <button id="btn-open-panel" class="btn secondary small">📋 Abrir painel no WhatsApp</button>
+        </div>
+      </div>
+
+      <div class="entries" id="current-entries">
+        <p class="empty">Aguardando conversa do WhatsApp Web...</p>
+      </div>
+
+      <div style="padding:8px; background:#0f1f2f; border:1px solid #243a58; border-radius:8px; margin-bottom:10px;">
+        <p style="font-size:10px; color:#f6c863; margin-bottom:6px;">💡 Áudio não capturou? Arraste arquivo aqui (método 100%):</p>
+        <div id="drop-zone" style="border:2px dashed #4de0d2; border-radius:8px; padding:10px; text-align:center; font-size:10px; color:#9cafc9; cursor:pointer; background:rgba(77,224,210,0.05);">
+          📁 Arraste áudios aqui ou clique<br>
+          <span style="font-size:9px;">.ogg, .mp3, .m4a, .wav</span>
+          <input type="file" id="file-input" accept="audio/*" multiple style="display:none;">
+        </div>
+      </div>
+
+      <div class="summary-area">
+        <div class="provider-row">
+          <label>Motor:</label>
+          <select id="ai-provider">
+            <option value="groq">Groq (nuvem)</option>
+            <option value="ollama">Ollama (local)</option>
+          </select>
+        </div>
+
+        <div class="actions-grid">
+          <button id="btn-transcribe-all" class="btn secondary" disabled>🎙️ Transcrever áudios</button>
+          <button id="btn-analyze-all" class="btn secondary" disabled>🖼️ Analisar imagens</button>
+        </div>
+
+        <div class="actions-grid">
+          <button id="btn-token" class="btn secondary" disabled>📊 Estimar tokens</button>
+          <button id="btn-export" class="btn secondary" disabled>📄 Exportar TXT</button>
+        </div>
+
+        <div class="actions-grid">
+          <button id="btn-gemini" class="btn secondary" disabled>🔮 Preparar Gemini</button>
+          <button id="btn-summarize" class="btn primary" disabled>✨ Gerar Resumo</button>
+        </div>
+
+        <div id="token-estimate" class="token-estimate">Selecione uma conversa para estimar tokens.</div>
+        <div id="summary-output" class="summary-output">O resumo aparecerá aqui.</div>
+        <button id="btn-copy-summary" class="btn secondary small" disabled>📋 Copiar resumo</button>
+      </div>
+    </div>
+
+    <!-- TAB: Salvas -->
+    <div class="tab-content" id="tab-saved">
+      <div class="saved-header">
+        <h2>Conversas Salvas</h2>
+        <div class="actions">
+          <input id="search-saved" type="search" placeholder="Buscar...">
+          <button id="btn-clear-all" class="btn danger small">🗑️ Apagar tudo</button>
+        </div>
+      </div>
+      <div id="saved-list" class="conversation-list">
+        <p class="empty">Nenhuma conversa salva ainda.</p>
+      </div>
+    </div>
+
+    <!-- TAB: Manual -->
+    <div class="tab-content" id="tab-manual">
+      <h2>Resumo Avulso</h2>
+      <p class="small">Cole uma conversa manualmente para testar a IA.</p>
+      <textarea id="manual-text" placeholder="Cole a conversa aqui..."></textarea>
+      <button id="btn-manual" class="btn primary">Gerar resumo manual</button>
+      <div id="manual-output" class="summary-output">Resultado manual aqui.</div>
+    </div>
+
+    <footer>
+      <span id="footer-info">Krever v1.0 • Groq + Ollama</span>
+      <span id="message-count"></span>
+    </footer>
+  </div>
+
+  <script src="../lib/prompts.js"></script>
+  <script src="../lib/utils.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

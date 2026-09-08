@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Krever - Configurações</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>⚙️ Krever Resumidor - Configurações</h1>
+      <p>Configure sua chave Groq e modelos de IA. As chaves ficam salvas apenas localmente no seu navegador.</p>
+    </header>
+
+    <section class="card">
+      <h2>🔑 Groq API</h2>
+      <p class="hint">Obtenha em <a href="https://console.groq.com/keys" target="_blank">console.groq.com/keys</a> - Nunca compartilhe sua chave.</p>
+      
+      <label>Groq API Key *</label>
+      <input type="password" id="groqApiKey" placeholder="gsk_...">
+      <button type="button" id="toggleKey" class="small-btn">👁️ Mostrar</button>
+
+      <div class="grid">
+        <div>
+          <label>Modelo Chat (resumo)</label>
+          <input type="text" id="groqChatModel" placeholder="llama-3.1-8b-instant">
+        </div>
+        <div>
+          <label>Modelo Transcrição</label>
+          <input type="text" id="groqTranscriptionModel" placeholder="whisper-large-v3-turbo">
+        </div>
+        <div>
+          <label>Modelo Visão (imagens)</label>
+          <input type="text" id="groqVisionModel" placeholder="qwen/qwen3.6-27b">
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>💻 Ollama Local (opcional)</h2>
+      <p class="hint">Para resumir sem gastar créditos Groq. Instale em <a href="https://ollama.com" target="_blank">ollama.com</a></p>
+      
+      <div class="grid">
+        <div>
+          <label>Ollama Base URL</label>
+          <input type="text" id="ollamaBaseUrl" placeholder="http://127.0.0.1:11434">
+        </div>
+        <div>
+          <label>Modelo Ollama</label>
+          <input type="text" id="ollamaChatModel" placeholder="llama3.2:3b">
+        </div>
+        <div>
+          <label>Keep Alive</label>
+          <select id="ollamaKeepAlive">
+            <option value="0">0 - Descarrega após uso (economiza RAM)</option>
+            <option value="5m">5m - Mantém 5 min</option>
+            <option value="10m">10m</option>
+            <option value="30m">30m</option>
+          </select>
+        </div>
+      </div>
+      <p class="hint">Comandos: <code>ollama pull llama3.2:3b</code> e <code>ollama serve</code></p>
+    </section>
+
+    <section class="card">
+      <h2>🔮 Gemini & Geral</h2>
+      <label>Gemini Chat URL</label>
+      <input type="text" id="geminiChatUrl" placeholder="https://gemini.google.com/app">
+
+      <label>Provedor Padrão</label>
+      <select id="summaryProvider">
+        <option value="groq">Groq (nuvem, rápido)</option>
+        <option value="ollama">Ollama (local, sem créditos)</option>
+      </select>
+
+      <label>Instruções de Resumo (prompt)</label>
+      <textarea id="instructions" rows="18"></textarea>
+      <p class="hint">Este é o prompt que a IA usa para gerar o resumo. Mesmo do seu sistema original.</p>
+    </section>
+
+    <section class="card">
+      <h2>🧪 Teste de Conexão</h2>
+      <div class="test-area">
+        <button id="testGroq" class="btn secondary">Testar Groq</button>
+        <button id="testOllama" class="btn secondary">Testar Ollama</button>
+        <span id="testResult" class="test-result"></span>
+      </div>
+    </section>
+
+    <div class="actions">
+      <button id="save" class="btn primary">💾 Salvar Configurações</button>
+      <button id="reset" class="btn danger">♻️ Restaurar Padrão</button>
+      <span id="saveStatus"></span>
+    </div>
+
+    <footer>
+      <p>Krever Resumidor v1.0 - Extensão Chrome • Dados salvos localmente • Chave nunca enviada para terceiros exceto api.groq.com</p>
+      <p><a href="https://web.whatsapp.com" target="_blank">Abrir WhatsApp Web</a> • <a href="#" id="clearData">Apagar conversas salvas</a></p>
+    </footer>
+  </div>
+
+  <script src="../lib/prompts.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
