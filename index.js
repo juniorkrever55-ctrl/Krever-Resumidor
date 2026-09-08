@@ -35,11 +35,16 @@ const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || 'llama-3.1-8b-instant';
 const GROQ_TRANSCRIPTION_MODEL = process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3-turbo';
-const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || 'qwen/qwen3.6-27b';
-const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
-// Modelo menor sem modo de raciocínio exposto; mais adequado para computadores com 8 GB de RAM.
-const OLLAMA_CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL || 'llama3.2:3b';
-const OLLAMA_KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || '0';
+// Groq descontinuou llama-4-scout/maverick em 2026. Modelos atuais com visão: openai/gpt-oss-20b, openai/gpt-oss-120b, qwen/qwen3.6-27b, qwen/qwen3.8-27b
+const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || 'openai/gpt-oss-20b';
+const GROQ_VISION_FALLBACKS = [
+  'openai/gpt-oss-20b',
+  'openai/gpt-oss-120b',
+  'qwen/qwen3.6-27b',
+  'qwen/qwen3.8-27b',
+  'meta-llama/llama-4-scout-17b-16e-instruct',
+  'meta-llama/llama-4-maverick-17b-128e-instruct',
+];
 const DEFAULT_GEMINI_CHAT_URL = 'https://gemini.google.com/app';
 const GEMINI_CHAT_URL = (() => {
   try {
@@ -59,25 +64,22 @@ const IMPORT_HISTORY = process.env.IMPORT_HISTORY !== 'false';
 const MAX_TRACKED_MESSAGE_IDS = Number(process.env.MAX_TRACKED_MESSAGE_IDS || 100000);
 const MAX_AUDIO_BYTES = Number(process.env.MAX_AUDIO_BYTES || 24 * 1024 * 1024);
 const MAX_SUBMITTED_SUMMARY_CHARS = Number(process.env.MAX_SUBMITTED_SUMMARY_CHARS || 1000000);
-const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 4096);
 const ON_DEMAND_HISTORY_PAGE_SIZE = 50;
 const BULK_TRANSCRIPTION_DELAY_MS = 1200;
 const BULK_TRANSCRIPTION_MAX_ATTEMPTS = 3;
 const MAX_VISION_IMAGE_BYTES = Number(process.env.MAX_VISION_IMAGE_BYTES || 14 * 1024 * 1024);
 
-const DEFAULT_SUMMARY_INSTRUCTIONS = `Você é um assistente de vendas de consórcio que registra notas internas de CRM. Transforme a conversa em um único texto corrido, profissional e objetivo, em português do Brasil, no estilo de evolução comercial/relatório de negociação.
+const DEFAULT_SUMMARY_INSTRUCTIONS = `Você é assistente de vendas de consórcio. Gere uma nota interna de CRM em português do Brasil, objetiva e profissional.
 
-IMPORTANTE: o resultado não é uma mensagem para enviar ao cliente. Nunca cumprimente, não se dirija ao cliente pelo nome, não faça perguntas, não use primeira pessoa ("eu", "gostaria", "estou aqui") e não ofereça ajuda diretamente. Escreva sempre em terceira pessoa, com linguagem de registro interno, usando construções como "O cliente informou...", "Foi apresentado...", "Houve restrição...", "A negociação ficou..." e "Próximo passo: ...".
-
-Use de 2 a 4 parágrafos naturais para a narrativa. Depois da narrativa, acrescente no final uma seção curta chamada "Dados relevantes:" seguida de uma lista objetiva. Inclua SOMENTE itens que tenham sido ditos ou confirmados na conversa; omita completamente dados ausentes, sem criar campos vazios e sem escrever "Não informado".
-
-Na lista, priorize: CPF ou CNPJ, renda mensal, valor da carta/crédito, parcelas apresentadas ou negociadas, aluguel, prazo pretendido, status e próximo passo. O campo de lance deve ser escrito exclusivamente como "Lance de recurso próprio" e só pode receber dinheiro que o cliente declarou possuir, ter guardado ou poder usar do próprio bolso. Nunca use nesse campo valor de parcela, primeira parcela, plano tradicional/promocional, entrada/adesão, taxa, lance embutido ou lance fidelidade. Lance embutido e lance fidelidade podem ser citados apenas como condição/benefício apresentado na narrativa, sem serem classificados como recurso próprio do cliente.
-
-Destaque apenas informações realmente importantes: objetivo do cliente, bem/crédito desejado, situação de aluguel, renda mensal, capacidade e parcela negociada, prazo/meta de contemplação, valor da carta, valor disponível para lance de recurso próprio, profissão, participação de cônjuge, condição apresentada, objeção/restrição, motivo de não fechamento, status e próximo passo. Não invente, estime ou complete informação ausente; simplesmente não a mencione.
-
-Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente informado (11 dígitos) e de CNPJ somente um CNPJ explicitamente informado (14 dígitos); não suponha um tipo de documento. Quando existirem, mencione de forma clara na narrativa e também na lista os dados críticos como renda mensal e documento. Nunca trate o nome/identificador do remetente no cabeçalho da conversa como dado comercial: números técnicos de LID/JID não são CPF, CNPJ, renda, lance ou qualquer informação do cliente. Use apenas informações presentes no conteúdo das mensagens. Explique a estratégia comercial apresentada, o desfecho da negociação e o próximo passo de forma factual. O resultado deve ser uma nota interna de CRM, nunca uma resposta, proposta ou texto de atendimento ao cliente.
-
-FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. Não gere, anexe ou ofereça PDF, documento, arquivo, planilha, apresentação, canvas, link de download ou qualquer outro anexo. Entregue somente a nota interna e a lista de dados relevantes como texto na resposta.`;
+REGRAS:
+- 2 a 4 parágrafos em 3ª pessoa: "Cliente informou...", "Foi apresentado...", "Negociação ficou...", "Próximo passo: ...". Nunca cumprimente, não use 1ª pessoa, não faça perguntas.
+- No final, adicione "Dados relevantes:" com lista apenas dos dados que APARECERAM na conversa. Omita ausentes, sem "Não informado".
+- Priorize na lista: CPF/CNPJ, renda mensal, valor carta/crédito, parcelas, aluguel, prazo, profissão, lance de recurso próprio (SOMENTE dinheiro que cliente disse ter guardado/possuir - nunca use parcela, taxa, entrada ou lance embutido/fidelidade como recurso próprio), objeção, status e próximo passo.
+- Lance embutido/fidelidade pode ser citado na narrativa como benefício, mas nunca como recurso próprio.
+- CPF = 11 dígitos explícitos, CNPJ = 14 dígitos explícitos. Não suponha tipo.
+- Ignore LID/JID técnicos (números longos no cabeçalho) - não são dados comerciais.
+- Não invente, não estime, não complete. Apenas fatos da conversa.
+- Entregue apenas texto simples, sem PDF, link ou anexo.`;
 
 const connection = {
   status: 'starting',
@@ -819,29 +821,69 @@ async function analyzeImageBuffer(buffer, mimeType) {
   }
 
   const base64 = buffer.toString('base64');
-  const data = await callGroq('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: GROQ_VISION_MODEL,
-      temperature: 0.1,
-      messages: [
-        {
-          role: 'system',
-          content: 'Você analisa imagens de simulação de consórcio para uma nota interna de CRM. Extraia somente informações visualmente legíveis e relevantes: administradora, crédito/carta, parcela, prazo, taxa/condições, lance de recurso próprio quando estiver explicitamente descrito e observações. Não invente valores. Não confunda lance embutido, lance fidelidade, parcela ou taxa com lance de recurso próprio. Responda em português, de forma factual e concisa.',
-        },
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: 'Analise esta imagem enviada na conversa e descreva apenas os dados de simulação de consórcio que puder ler.' },
-            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
-          ],
-        },
-      ],
-    }),
-  });
+  // Tenta lista de modelos de visão até um funcionar (Groq descontinuou scout/maverick em 2026)
+  const modelsToTry = [GROQ_VISION_MODEL, ...GROQ_VISION_FALLBACKS.filter(m => m !== GROQ_VISION_MODEL)];
+  let lastError = null;
+  let data = null;
 
-  const analysis = data?.choices?.[0]?.message?.content?.trim();
+  // Prompt usado para análise - usuário pode customizar via .env GROQ_VISION_PROMPT
+  const visionSystemPrompt = process.env.GROQ_VISION_PROMPT || 'Você analisa imagens de simulação de consórcio. Extraia APENAS dados visíveis na imagem, sem inventar. Retorne em formato curto e objetivo, sem explicar raciocínio, sem usar <think>. Formato:\nAdministradora: ...\nCrédito/Carta: ...\nParcela: ...\nPrazo: ...\nTaxa/Adesão/Condições: ...\nLance recurso próprio (SOMENTE se estiver escrito explicitamente como recurso próprio/dinheiro guardado): ... ou Não informado\nObservações: ...\nNão inclua raciocínio passo a passo, apenas o resultado final.';
+  const visionUserPrompt = process.env.GROQ_VISION_USER_PROMPT || 'Analise esta imagem de simulação de consórcio e extraia apenas os dados que conseguir ler. Retorne apenas o resultado final, sem <think>.';
+
+  for (const model of modelsToTry) {
+    try {
+      console.log(`Tentando análise de imagem com modelo: ${model}`);
+      const isGptOss = model.includes('gpt-oss');
+      const isQwen = model.includes('qwen');
+      const body = {
+        model,
+        temperature: 0.1,
+        max_completion_tokens: 600,
+        // Esconde raciocínio <think> - essencial para gpt-oss e qwen3
+        ...(isGptOss ? { include_reasoning: false, reasoning_effort: 'low' } : {}),
+        ...(isQwen ? { reasoning_format: 'hidden', reasoning_effort: 'default' } : {}),
+        ...(!isGptOss && !isQwen ? { reasoning_format: 'hidden' } : {}),
+        messages: [
+          {
+            role: 'system',
+            content: visionSystemPrompt,
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: visionUserPrompt },
+              { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+            ],
+          },
+        ],
+      };
+      data = await callGroq('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (data) {
+        console.log(`Sucesso com modelo de visão: ${model}`);
+        break;
+      }
+    } catch (error) {
+      lastError = error;
+      const msg = String(error.message || '').toLowerCase();
+      const isModelError = msg.includes('does not exist') || msg.includes('decommissioned') || msg.includes('deprecated') || msg.includes('vision') || msg.includes('does not support') || error.statusCode === 400 || error.statusCode === 404;
+      console.warn(`Modelo ${model} falhou: ${error.message}`);
+      if (!isModelError) throw error;
+    }
+  }
+
+  if (!data) {
+    const err = new Error(lastError ? `${lastError.message} | Modelos tentados: ${modelsToTry.join(', ')} | Configure GROQ_VISION_MODEL no .env com um modelo válido` : 'Falha na análise de imagem');
+    err.statusCode = lastError?.statusCode || 502;
+    throw err;
+  }
+
+  let analysis = data?.choices?.[0]?.message?.content?.trim() || '';
+  // Remove <think>...</think> se o modelo ainda retornar mesmo com hidden (fallback)
+  analysis = analysis.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<\|channel\|>[\s\S]*?<\/\|channel\|>/gi, '').trim();
   if (!analysis) {
     const error = new Error('A Groq não retornou uma análise válida para a imagem.');
     error.statusCode = 502;
@@ -1509,16 +1551,6 @@ function validateText(value, field, maximum) {
   return value.trim();
 }
 
-function normalizeSummaryProvider(provider) {
-  return provider === 'ollama' ? 'ollama' : 'groq';
-}
-
-function trimTranscriptForProvider(text, provider) { // eslint-disable-line no-unused-vars
-  // A conversa é enviada integralmente por decisão do usuário. O provedor pode recusar
-  // contextos que excedam sua própria janela/limite de tokens, sem cortes silenciosos.
-  return text;
-}
-
 function getSummaryPrompt(instructions) {
   return typeof instructions === 'string' && instructions.trim()
     ? instructions.trim().slice(0, 5000)
@@ -1526,7 +1558,6 @@ function getSummaryPrompt(instructions) {
 }
 
 function estimateTokens(text) {
-  // Estimativa conservadora para português. O tokenizador real do modelo pode variar.
   return Math.ceil(String(text || '').length / 3.2);
 }
 
@@ -1536,61 +1567,17 @@ function buildConversationTranscript(conversationId) {
     .join('\n');
 }
 
-async function summarizeWithOllama(prompt, compactConversation) {
-  let response;
-  try {
-    response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: OLLAMA_CHAT_MODEL,
-        stream: false,
-        // Resumos não exigem raciocínio passo a passo; desativar reduz muito o tempo no Qwen3.
-        think: false,
-        // 0 descarrega o modelo ao fim da resposta para liberar RAM/llama-server.exe.
-        keep_alive: OLLAMA_KEEP_ALIVE,
-        messages: [
-          { role: 'system', content: prompt },
-          { role: 'user', content: `Conversa para análise:\n\n${compactConversation}` },
-        ],
-        options: { temperature: 0.2, num_ctx: OLLAMA_NUM_CTX, num_predict: 1200 },
-      }),
-    });
-  } catch (cause) {
-    const error = new Error(`Não foi possível conectar ao Ollama em ${OLLAMA_BASE_URL}. Instale/inicie o Ollama e baixe o modelo ${OLLAMA_CHAT_MODEL}.`);
-    error.statusCode = 503;
-    throw error;
-  }
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(data.error || `Ollama respondeu com HTTP ${response.status}. Verifique se o modelo ${OLLAMA_CHAT_MODEL} foi baixado.`);
-    error.statusCode = response.status >= 500 ? 502 : response.status;
-    throw error;
-  }
-
-  const result = data?.message?.content?.trim();
-  if (!result) {
-    const error = new Error('O Ollama não retornou um resumo válido.');
-    error.statusCode = 502;
-    throw error;
-  }
-  return result;
-}
-
-function saveAiRequestLog({ provider, prompt, originalConversation, compactConversation }) {
+function saveAiRequestLog({ prompt, originalConversation, compactConversation }) {
   if (!SAVE_AI_REQUESTS) return null;
   try {
     fs.mkdirSync(AI_REQUESTS_DIR, { recursive: true });
     const timestamp = new Date().toISOString();
-    const model = provider === 'ollama' ? OLLAMA_CHAT_MODEL : GROQ_CHAT_MODEL;
-    const fileName = `${timestamp.replace(/[:.]/g, '-')}-${provider}-${crypto.randomUUID().slice(0, 8)}.txt`;
+    const fileName = `${timestamp.replace(/[:.]/g, '-')}-groq-${crypto.randomUUID().slice(0, 8)}.txt`;
     const content = `DATA: ${timestamp}
-PROVEDOR: ${provider}
-MODELO: ${model}
+PROVEDOR: groq
+MODELO: ${GROQ_CHAT_MODEL}
 CARACTERES ORIGINAIS: ${originalConversation.length}
 CARACTERES ENVIADOS: ${compactConversation.length}
-CONTEXTO COMPACTADO: ${originalConversation.length > compactConversation.length ? 'sim' : 'não'}
 
 === INSTRUÇÕES ENVIADAS ===
 ${prompt}
@@ -1606,16 +1593,10 @@ ${compactConversation}
   }
 }
 
-async function summarize(text, instructions, provider) {
-  const selectedProvider = normalizeSummaryProvider(provider);
+async function summarize(text, instructions) {
   const conversation = validateText(text, 'A conversa', MAX_SUBMITTED_SUMMARY_CHARS);
-  const compactConversation = trimTranscriptForProvider(conversation, selectedProvider);
   const prompt = getSummaryPrompt(instructions);
-  saveAiRequestLog({ provider: selectedProvider, prompt, originalConversation: conversation, compactConversation });
-
-  if (selectedProvider === 'ollama') {
-    return summarizeWithOllama(prompt, compactConversation);
-  }
+  saveAiRequestLog({ prompt, originalConversation: conversation, compactConversation: conversation });
 
   const data = await callGroq('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -1626,7 +1607,7 @@ async function summarize(text, instructions, provider) {
       max_completion_tokens: 900,
       messages: [
         { role: 'system', content: prompt },
-        { role: 'user', content: `Conversa para análise:\n\n${compactConversation}` },
+        { role: 'user', content: `Conversa para análise:\n\n${conversation}` },
       ],
     }),
   });
@@ -1873,9 +1854,18 @@ app.post('/api/conversations/:id/audio/:messageId/transcribe', async (req, res, 
   }
 });
 
+app.post('/api/conversations/:id/image/:messageId/analyze', async (req, res, next) => {
+  try {
+    const entry = await analyzeStoredConversationImage(req.params.id, req.params.messageId);
+    return res.json({ entry: toPublicEntry(entry) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/summarize', async (req, res, next) => {
   try {
-    const summary = await summarize(req.body?.text, req.body?.instructions, req.body?.provider);
+    const summary = await summarize(req.body?.text, req.body?.instructions);
     res.json({ summary });
   } catch (error) {
     next(error);
@@ -1888,24 +1878,20 @@ app.post('/api/conversations/:id/token-estimate', (req, res, next) => {
     const index = loadConversationIndex();
     if (!index.conversations[id]) return res.status(404).json({ error: 'Conversa não encontrada.' });
 
-    const provider = normalizeSummaryProvider(req.body?.provider);
     const transcript = buildConversationTranscript(id);
-    const compactTranscript = trimTranscriptForProvider(transcript, provider);
     const prompt = getSummaryPrompt(req.body?.instructions);
-    const inputTokens = estimateTokens(`${prompt}\n${compactTranscript}`);
-    const outputTokens = provider === 'ollama' ? 1200 : 900;
+    const inputTokens = estimateTokens(`${prompt}\n${transcript}`);
+    const outputTokens = 900;
     return res.json({
       estimatedInputTokens: inputTokens,
       outputTokenBudget: outputTokens,
       estimatedTotalTokens: inputTokens + outputTokens,
       originalCharacters: transcript.length,
-      sentCharacters: compactTranscript.length,
-      compacted: compactTranscript.length < transcript.length,
-      provider,
+      sentCharacters: transcript.length,
+      compacted: false,
+      provider: 'groq',
       contextLimitCharacters: null,
-      note: provider === 'ollama'
-        ? 'Estimativa aproximada do contexto local completo; o consumo não usa créditos da Groq.'
-        : 'Estimativa aproximada do contexto completo; a Groq pode recusar a chamada se o limite de tokens for excedido.',
+      note: 'Estimativa aproximada do contexto completo; a Groq pode recusar a chamada se o limite de tokens for excedido.',
     });
   } catch (error) {
     return next(error);
@@ -1920,7 +1906,7 @@ app.post('/api/conversations/:id/summarize', async (req, res, next) => {
     if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' });
 
     const transcript = buildConversationTranscript(id);
-    const summary = await summarize(transcript, req.body?.instructions, req.body?.provider);
+    const summary = await summarize(transcript, req.body?.instructions);
     return res.json({ summary, conversation: toPublicConversation(conversation) });
   } catch (error) {
     return next(error);
