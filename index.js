@@ -35,15 +35,13 @@ const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || 'llama-3.1-8b-instant';
 const GROQ_TRANSCRIPTION_MODEL = process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3-turbo';
-// Groq descontinuou llama-4-scout/maverick em 2026. Modelos atuais com visão: openai/gpt-oss-20b, openai/gpt-oss-120b, qwen/qwen3.6-27b, qwen/qwen3.8-27b
-const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || 'openai/gpt-oss-20b';
+// Groq visão em set/2026: APENAS qwen/qwen3.6-27b e qwen/qwen3.8-27b suportam image_url
+// gpt-oss-20b/120b são texto puro e retornam vazio se mandar imagem -> causa "não retornou análise válida"
+// scout/maverick foram descontinuados mar/jul 2026
+const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || 'qwen/qwen3.6-27b';
 const GROQ_VISION_FALLBACKS = [
-  'openai/gpt-oss-20b',
-  'openai/gpt-oss-120b',
   'qwen/qwen3.6-27b',
   'qwen/qwen3.8-27b',
-  'meta-llama/llama-4-scout-17b-16e-instruct',
-  'meta-llama/llama-4-maverick-17b-128e-instruct',
 ];
 const DEFAULT_GEMINI_CHAT_URL = 'https://gemini.google.com/app';
 const GEMINI_CHAT_URL = (() => {
@@ -821,33 +819,31 @@ async function analyzeImageBuffer(buffer, mimeType) {
   }
 
   const base64 = buffer.toString('base64');
-  // Tenta lista de modelos de visão até um funcionar (Groq descontinuou scout/maverick em 2026)
-  const modelsToTry = [GROQ_VISION_MODEL, ...GROQ_VISION_FALLBACKS.filter(m => m !== GROQ_VISION_MODEL)];
+  // Groq visão set/2026: só qwen/qwen3.6-27b e qwen/qwen3.8-27b suportam image_url
+  // https://console.groq.com/docs/vision - gpt-oss são texto puro e retornam vazio
+  const rawModels = [GROQ_VISION_MODEL, ...GROQ_VISION_FALLBACKS.filter(m => m !== GROQ_VISION_MODEL)];
+  const modelsToTry = [...new Set(rawModels)];
   let lastError = null;
-  let data = null;
+  let lastRawResponse = '';
 
-  // Prompt usado para análise - usuário pode customizar via .env GROQ_VISION_PROMPT
   const visionSystemPrompt = process.env.GROQ_VISION_PROMPT || 'Você analisa imagens de simulação de consórcio. Extraia APENAS dados visíveis na imagem, sem inventar. Retorne em formato curto e objetivo, sem explicar raciocínio, sem usar <think>. Formato:\nAdministradora: ...\nCrédito/Carta: ...\nParcela: ...\nPrazo: ...\nTaxa/Adesão/Condições: ...\nLance recurso próprio (SOMENTE se estiver escrito explicitamente como recurso próprio/dinheiro guardado): ... ou Não informado\nObservações: ...\nNão inclua raciocínio passo a passo, apenas o resultado final.';
   const visionUserPrompt = process.env.GROQ_VISION_USER_PROMPT || 'Analise esta imagem de simulação de consórcio e extraia apenas os dados que conseguir ler. Retorne apenas o resultado final, sem <think>.';
 
   for (const model of modelsToTry) {
+    if (model.includes('gpt-oss') || model.includes('llama-3.1') || model.includes('llama-3.3')) {
+      console.warn(`Pulando ${model} - modelo texto puro, não suporta visão (só qwen/qwen3.6-27b e qwen/qwen3.8-27b têm visão em set/2026)`);
+      continue;
+    }
     try {
       console.log(`Tentando análise de imagem com modelo: ${model}`);
-      const isGptOss = model.includes('gpt-oss');
       const isQwen = model.includes('qwen');
       const body = {
         model,
-        temperature: 0.1,
-        max_completion_tokens: 600,
-        // Esconde raciocínio <think> - essencial para gpt-oss e qwen3
-        ...(isGptOss ? { include_reasoning: false, reasoning_effort: 'low' } : {}),
-        ...(isQwen ? { reasoning_format: 'hidden', reasoning_effort: 'default' } : {}),
-        ...(!isGptOss && !isQwen ? { reasoning_format: 'hidden' } : {}),
+        temperature: 0.2,
+        max_completion_tokens: 900,
+        ...(isQwen ? { reasoning_format: 'hidden', reasoning_effort: 'default' } : { reasoning_format: 'hidden' }),
         messages: [
-          {
-            role: 'system',
-            content: visionSystemPrompt,
-          },
+          { role: 'system', content: visionSystemPrompt },
           {
             role: 'user',
             content: [
@@ -857,40 +853,44 @@ async function analyzeImageBuffer(buffer, mimeType) {
           },
         ],
       };
-      data = await callGroq('https://api.groq.com/openai/v1/chat/completions', {
+      const data = await callGroq('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (data) {
-        console.log(`Sucesso com modelo de visão: ${model}`);
-        break;
+      lastRawResponse = JSON.stringify(data).slice(0, 2500);
+
+      let content = data?.choices?.[0]?.message?.content?.trim() || '';
+      if (!content) {
+        content = (data?.choices?.[0]?.message?.reasoning || '').trim();
       }
+      content = content.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<\|channel\|>[\s\S]*?<\/\|channel\|>/gi, '').replace(/<\|[^|]+\|>/g, '').trim();
+
+      if (!content) {
+        console.warn(`Modelo ${model} retornou vazio. Resposta: ${lastRawResponse.slice(0, 500)}`);
+        lastError = new Error(`Modelo ${model} retornou resposta vazia`);
+        lastError.statusCode = 502;
+        continue;
+      }
+
+      console.log(`Sucesso com modelo de visão: ${model} -> ${content.slice(0, 80)}...`);
+      return content;
     } catch (error) {
       lastError = error;
       const msg = String(error.message || '').toLowerCase();
-      const isModelError = msg.includes('does not exist') || msg.includes('decommissioned') || msg.includes('deprecated') || msg.includes('vision') || msg.includes('does not support') || error.statusCode === 400 || error.statusCode === 404;
+      const isModelError = msg.includes('does not exist') || msg.includes('decommissioned') || msg.includes('deprecated') || msg.includes('vision') || msg.includes('does not support') || msg.includes('image_url') || msg.includes('must be a string') || msg.includes('invalid') || error.statusCode === 400 || error.statusCode === 404 || error.statusCode === 502;
       console.warn(`Modelo ${model} falhou: ${error.message}`);
       if (!isModelError) throw error;
     }
   }
 
-  if (!data) {
-    const err = new Error(lastError ? `${lastError.message} | Modelos tentados: ${modelsToTry.join(', ')} | Configure GROQ_VISION_MODEL no .env com um modelo válido` : 'Falha na análise de imagem');
-    err.statusCode = lastError?.statusCode || 502;
-    throw err;
-  }
-
-  let analysis = data?.choices?.[0]?.message?.content?.trim() || '';
-  // Remove <think>...</think> se o modelo ainda retornar mesmo com hidden (fallback)
-  analysis = analysis.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<\|channel\|>[\s\S]*?<\/\|channel\|>/gi, '').trim();
-  if (!analysis) {
-    const error = new Error('A Groq não retornou uma análise válida para a imagem.');
-    error.statusCode = 502;
-    throw error;
-  }
-  return analysis;
+  const attempted = modelsToTry.join(', ');
+  const detail = lastRawResponse ? ` Última resposta: ${lastRawResponse.slice(0, 400)}` : '';
+  const err = new Error(lastError ? `${lastError.message} | Modelos tentados: ${attempted} | Use GROQ_VISION_MODEL=qwen/qwen3.6-27b (único com visão válido em set/2026).${detail}` : `Falha - nenhum modelo de visão retornou conteúdo. Tentados: ${attempted}.${detail}`);
+  err.statusCode = lastError?.statusCode || 502;
+  throw err;
 }
+
 
 async function analyzeStoredConversationImage(conversationId, messageId) {
   const entry = getImageEntry(conversationId, messageId);
