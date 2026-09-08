@@ -72,13 +72,9 @@
     .summary-area { padding:18px 19px 20px; border-top:1px solid var(--line); }
     label { display:block; margin-bottom:7px; color:#b9c9df; font-size:.78rem; font-weight:750; }
     textarea { display:block; width:100%; min-height:88px; resize:vertical; padding:10px 12px; color:var(--text); border:1px solid #304866; border-radius:10px; background:#091525; line-height:1.45; font-size:.84rem; }
-    .summary-actions { display:flex; align-items:center; gap:12px; margin-top:11px; }
+    .summary-actions { display:flex; align-items:center; gap:12px; margin-top:11px; flex-wrap:wrap; }
     .summary-output { margin-top:15px; padding:14px; min-height:62px; border:1px solid #29425f; border-radius:11px; color:#dce9fb; background:#091525; white-space:pre-wrap; overflow-wrap:anywhere; font-size:.87rem; line-height:1.55; }
     .token-estimate { margin-top:9px; color:#9cafc9; font-size:.75rem; line-height:1.4; }
-    .provider-row { display:flex; align-items:center; flex-wrap:wrap; gap:9px; margin-bottom:13px; }
-    .provider-row label { margin:0; }
-    .provider-select { min-height:36px; padding:7px 10px; color:var(--text); border:1px solid #304866; border-radius:9px; background:#091525; font-size:.8rem; }
-    .provider-note { color:var(--muted); font-size:.74rem; line-height:1.35; }
     .manual { margin-top:22px; padding:19px; }
     .manual-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
     .manual textarea { min-height:170px; }
@@ -93,7 +89,7 @@
       <div>
         <p class="eyebrow">Assistente de consórcio</p>
         <h1>Central de conversas</h1>
-        <p class="subhead">Conecte seu WhatsApp, acompanhe as mensagens novas, transcreva áudios e gere resumos objetivos com IA.</p>
+        <p class="subhead">Conecte seu WhatsApp, transcreva áudios, analise imagens e prepare tudo para o Gemini.</p>
       </div>
       <div class="pill"><span class="dot" id="header-dot"></span><span id="header-status">Iniciando conexão</span></div>
     </header>
@@ -102,7 +98,7 @@
       <div>
         <div class="status-title"><span class="dot" id="connection-dot"></span><h2 id="whatsapp-title">WhatsApp</h2></div>
         <p class="status-text" id="connection-text">Preparando a conexão com o WhatsApp…</p>
-        <p class="warning hidden" id="groq-warning">A chave da Groq ainda não foi configurada. O WhatsApp pode conectar, mas resumos e transcrição de áudio só funcionarão depois de criar o arquivo <strong>.env</strong>.</p>
+        <p class="warning hidden" id="groq-warning">A chave da Groq ainda não foi configurada. O WhatsApp pode conectar, mas transcrição e análise só funcionarão depois de criar o arquivo <strong>.env</strong>.</p>
         <div class="connection-actions">
           <button class="button secondary" type="button" id="reset-button">Refazer conexão / novo QR</button>
           <button class="button danger" type="button" id="new-account-button">Trocar conta e apagar histórico</button>
@@ -129,34 +125,26 @@
             <button class="button secondary" type="button" id="prepare-gemini-button" disabled>Preparar para Gemini</button>
             <button class="button secondary" type="button" id="export-txt-button" disabled>Exportar TXT</button>
             <button class="button secondary" type="button" id="transcribe-all-button" disabled>Transcrever todos os áudios</button>
+            <button class="button secondary" type="button" id="analyze-all-images-button" disabled>Analisar todas as imagens</button>
             <button class="button secondary" type="button" id="older-history-button" disabled>Buscar 50 anteriores</button>
           </div>
         </div>
         <div class="entries" id="entries"><p class="empty">Conecte o WhatsApp e escolha uma conversa para ver o histórico armazenado.</p></div>
         <section class="summary-area">
-          <div class="provider-row">
-            <label for="ai-provider">Motor do resumo</label>
-            <select class="provider-select" id="ai-provider">
-              <option value="groq">Groq — nuvem / rápido</option>
-              <option value="ollama">Local (Ollama) — sem créditos</option>
-            </select>
-            <span class="provider-note" id="provider-note"></span>
-          </div>
-          <label for="instructions">Instruções do resumo</label>
-          <textarea id="instructions" rows="16">Você é um assistente de vendas de consórcio que registra notas internas de CRM. Transforme a conversa em um único texto corrido, profissional e objetivo, em português do Brasil, no estilo de evolução comercial/relatório de negociação.
+          <label for="instructions">Instruções do resumo (usado no Gemini)</label>
+          <textarea id="instructions" rows="10">Você é assistente de vendas de consórcio. Gere uma nota interna de CRM em português do Brasil, objetiva e profissional.
 
-IMPORTANTE: o resultado não é uma mensagem para enviar ao cliente. Nunca cumprimente, não se dirija ao cliente pelo nome, não faça perguntas, não use primeira pessoa ("eu", "gostaria", "estou aqui") e não ofereça ajuda diretamente. Escreva sempre em terceira pessoa, com linguagem de registro interno, usando construções como "O cliente informou...", "Foi apresentado...", "Houve restrição...", "A negociação ficou..." e "Próximo passo: ...".
-
-Use de 2 a 4 parágrafos naturais para a narrativa. Depois da narrativa, acrescente no final uma seção curta chamada "Dados relevantes:" seguida de uma lista objetiva. Inclua SOMENTE itens que tenham sido ditos ou confirmados na conversa; omita completamente dados ausentes, sem criar campos vazios e sem escrever "Não informado".
-
-Na lista, priorize: CPF ou CNPJ, renda mensal, valor da carta/crédito, parcelas apresentadas ou negociadas, aluguel, prazo pretendido, status e próximo passo. O campo de lance deve ser escrito exclusivamente como "Lance de recurso próprio" e só pode receber dinheiro que o cliente declarou possuir, ter guardado ou poder usar do próprio bolso. Nunca use nesse campo valor de parcela, primeira parcela, plano tradicional/promocional, entrada/adesão, taxa, lance embutido ou lance fidelidade. Lance embutido e lance fidelidade podem ser citados apenas como condição/benefício apresentado na narrativa, sem serem classificados como recurso próprio do cliente.
-
-Destaque apenas informações realmente importantes: objetivo do cliente, bem/crédito desejado, situação de aluguel, renda mensal, capacidade e parcela negociada, prazo/meta de contemplação, valor da carta, valor disponível para lance de recurso próprio, profissão, participação de cônjuge, condição apresentada, objeção/restrição, motivo de não fechamento, status e próximo passo. Não invente, estime ou complete informação ausente; simplesmente não a mencione.
-
-Diferencie documentos corretamente: chame de CPF somente um CPF explicitamente informado (11 dígitos) e de CNPJ somente um CNPJ explicitamente informado (14 dígitos); não suponha um tipo de documento. Quando existirem, mencione de forma clara na narrativa e também na lista os dados críticos como renda mensal e documento. Nunca trate o nome/identificador do remetente no cabeçalho da conversa como dado comercial: números técnicos de LID/JID não são CPF, CNPJ, renda, lance ou qualquer informação do cliente. Use apenas informações presentes no conteúdo das mensagens. Explique a estratégia comercial apresentada, o desfecho da negociação e o próximo passo de forma factual. O resultado deve ser uma nota interna de CRM, nunca uma resposta, proposta ou texto de atendimento ao cliente.
-
-FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. Não gere, anexe ou ofereça PDF, documento, arquivo, planilha, apresentação, canvas, link de download ou qualquer outro anexo. Entregue somente a nota interna e a lista de dados relevantes como texto na resposta.</textarea>
-          <div class="summary-actions"><button class="button" type="button" id="summarize-button" disabled>Gerar resumo da conversa</button><button class="button secondary" type="button" id="token-estimate-button" disabled>Estimar tokens</button><button class="button secondary" type="button" id="copy-summary-button" disabled>Copiar resumo</button><span class="hint" id="summary-hint">Escolha uma conversa para resumir.</span></div>
+REGRAS:
+- 2 a 4 parágrafos em 3ª pessoa: "Cliente informou...", "Foi apresentado...", "Negociação ficou...", "Próximo passo: ...". Nunca cumprimente, não use 1ª pessoa, não faça perguntas.
+- No final, adicione "Dados relevantes:" com lista apenas dos dados que APARECERAM na conversa. Omita ausentes, sem "Não informado".
+- Priorize na lista: CPF/CNPJ, renda mensal, valor carta/crédito, parcelas, aluguel, prazo, profissão, lance de recurso próprio (SOMENTE dinheiro que cliente disse ter guardado/possuir - nunca use parcela, taxa, entrada ou lance embutido/fidelidade como recurso próprio), objeção, status e próximo passo.
+- Lance embutido/fidelidade pode ser citado na narrativa como benefício, mas nunca como recurso próprio.
+- CPF = 11 dígitos explícitos, CNPJ = 14 dígitos explícitos. Não suponha tipo.
+- Ignore LID/JID técnicos (números longos no cabeçalho) - não são dados comerciais.
+- Não invente, não estime, não complete. Apenas fatos da conversa.
+- Entregue apenas texto simples, sem PDF, link ou anexo.</textarea>
+          <p class="small">Fluxo: Groq transcreve áudios e analisa imagens (botões acima). Resumo final você gera no Gemini com o TXT + este prompt.</p>
+          <div class="summary-actions"><button class="button" type="button" id="summarize-button" disabled>Gerar resumo da conversa (Groq)</button><button class="button secondary" type="button" id="token-estimate-button" disabled>Estimar tokens</button><button class="button secondary" type="button" id="copy-summary-button" disabled>Copiar resumo</button><span class="hint" id="summary-hint">Escolha uma conversa para resumir.</span></div>
           <div class="token-estimate" id="token-estimate">Selecione uma conversa para estimar o uso de tokens.</div>
           <div class="summary-output" id="summary-output" aria-live="polite">O resumo aparecerá aqui.</div>
         </section>
@@ -174,28 +162,19 @@ FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. 
   </div>
 
   <script>
-    const savedProvider = localStorage.getItem('consorcio-ai-provider');
-    const state = { selectedConversationId: null, instructions: document.getElementById('instructions').value, entries: [], conversations: [], provider: savedProvider === 'ollama' ? 'ollama' : 'groq', geminiChatUrl: 'https://gemini.google.com/app' };
+    const state = { selectedConversationId: null, instructions: document.getElementById('instructions').value, entries: [], conversations: [], geminiChatUrl: 'https://gemini.google.com/app' };
     const elements = {
       headerDot: document.getElementById('header-dot'), headerStatus: document.getElementById('header-status'),
       connectionDot: document.getElementById('connection-dot'), connectionText: document.getElementById('connection-text'),
       qrImage: document.getElementById('qr-image'), qrPlaceholder: document.getElementById('qr-placeholder'),
       groqWarning: document.getElementById('groq-warning'), resetButton: document.getElementById('reset-button'), newAccountButton: document.getElementById('new-account-button'),
       conversationList: document.getElementById('conversation-list'), conversationSearch: document.getElementById('conversation-search'), conversationTitle: document.getElementById('conversation-title'),
-      conversationInfo: document.getElementById('conversation-info'), prepareGeminiButton: document.getElementById('prepare-gemini-button'), exportTxtButton: document.getElementById('export-txt-button'), transcribeAllButton: document.getElementById('transcribe-all-button'), olderHistoryButton: document.getElementById('older-history-button'), entries: document.getElementById('entries'),
+      conversationInfo: document.getElementById('conversation-info'), prepareGeminiButton: document.getElementById('prepare-gemini-button'), exportTxtButton: document.getElementById('export-txt-button'),
+      transcribeAllButton: document.getElementById('transcribe-all-button'), analyzeAllImagesButton: document.getElementById('analyze-all-images-button'), olderHistoryButton: document.getElementById('older-history-button'), entries: document.getElementById('entries'),
       summarizeButton: document.getElementById('summarize-button'), tokenEstimateButton: document.getElementById('token-estimate-button'), tokenEstimate: document.getElementById('token-estimate'), copySummaryButton: document.getElementById('copy-summary-button'), summaryHint: document.getElementById('summary-hint'),
-      summaryOutput: document.getElementById('summary-output'), instructions: document.getElementById('instructions'), aiProvider: document.getElementById('ai-provider'), providerNote: document.getElementById('provider-note'),
+      summaryOutput: document.getElementById('summary-output'), instructions: document.getElementById('instructions'),
       manualText: document.getElementById('manual-text'), manualOutput: document.getElementById('manual-output'), manualButton: document.getElementById('manual-button'),
     };
-
-    elements.aiProvider.value = state.provider;
-    function updateProviderNote() {
-      const isLocal = state.provider === 'ollama';
-      elements.providerNote.textContent = isLocal
-        ? 'Resumo no seu computador via Ollama. Áudio e imagem, quando selecionados, continuam usando Groq.'
-        : 'Resumo na Groq. Ideal para conversas curtas e respostas rápidas.';
-    }
-    updateProviderNote();
 
     const statusCopy = {
       starting: 'Iniciando a conexão com o WhatsApp…',
@@ -250,9 +229,7 @@ FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. 
       try {
         const config = await request('/api/assistant-config');
         if (typeof config.geminiChatUrl === 'string') state.geminiChatUrl = config.geminiChatUrl;
-      } catch {
-        // O botão usa a URL padrão do Gemini se o servidor não puder fornecer configuração.
-      }
+      } catch {}
     }
 
     async function refreshStatus() {
@@ -270,7 +247,6 @@ FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. 
         const searchable = normalizeSearch(`${conversation.name || ''} ${conversation.phone || ''} ${conversation.preview || ''}`);
         return searchable.includes(query);
       });
-
       elements.conversationList.replaceChildren();
       if (!filtered.length) {
         const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = query ? 'Nenhuma conversa encontrada para esta pesquisa.' : 'Ainda não há conversas registradas.'; elements.conversationList.append(empty); return;
@@ -306,7 +282,7 @@ FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. 
 
     function imageStatusLabel(status) {
       const labels = {
-        pending: 'Imagem salva — aguardando análise no resumo',
+        pending: 'Imagem salva — aguardando análise',
         completed: 'Imagem analisada pela IA',
         failed: 'A análise da imagem não foi concluída',
         not_stored: 'Imagem não foi salva localmente',
@@ -339,7 +315,6 @@ FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. 
         const message = document.createElement('article'); message.className = `message${entry.fromMe ? ' own' : ''}`;
         const meta = document.createElement('div'); meta.className = 'message-meta'; meta.textContent = `${entry.fromMe ? 'Você' : entry.sender || 'Contato'} · ${formatDate(entry.timestamp)}`;
         message.append(meta);
-
         if (entry.type === 'audio') {
           const audioLabel = document.createElement('div'); audioLabel.className = 'message-audio'; audioLabel.textContent = audioStatusLabel(entry.audio?.transcriptionStatus); message.append(audioLabel);
           const tools = document.createElement('div'); tools.className = 'audio-tools';
@@ -352,11 +327,10 @@ FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. 
               action.addEventListener('click', () => transcribeAudioEntry(entry, action)); tools.append(action);
             }
           } else {
-            const note = document.createElement('span'); note.className = 'audio-note'; note.textContent = 'Este arquivo não está disponível localmente para reprodução ou transcrição.'; tools.append(note);
+            const note = document.createElement('span'); note.className = 'audio-note'; note.textContent = 'Este arquivo não está disponível localmente.'; tools.append(note);
           }
           message.append(tools);
         }
-
         if (entry.type === 'image') {
           const imageLabel = document.createElement('div'); imageLabel.className = 'image-status'; imageLabel.textContent = imageStatusLabel(entry.image?.analysisStatus); message.append(imageLabel);
           if (entry.image?.fileName && entry.sourceMessageId) {
@@ -364,10 +338,9 @@ FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. 
             preview.src = `/api/conversations/${encodeURIComponent(state.selectedConversationId)}/image/${encodeURIComponent(entry.sourceMessageId)}`;
             message.append(preview);
           } else {
-            const note = document.createElement('div'); note.className = 'audio-note'; note.textContent = 'Este arquivo não está disponível localmente para análise.'; message.append(note);
+            const note = document.createElement('div'); note.className = 'audio-note'; note.textContent = 'Este arquivo não está disponível localmente.'; message.append(note);
           }
         }
-
         const text = document.createElement('div'); text.className = 'message-text'; text.textContent = entry.text; message.append(text); elements.entries.append(message);
       });
       elements.entries.scrollTop = elements.entries.scrollHeight;
@@ -384,8 +357,9 @@ FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. 
         elements.prepareGeminiButton.disabled = false;
         elements.exportTxtButton.disabled = false;
         elements.transcribeAllButton.disabled = false;
+        elements.analyzeAllImagesButton.disabled = false;
         elements.olderHistoryButton.disabled = false;
-        elements.summaryHint.textContent = 'A IA receberá as mensagens registradas desta conversa.';
+        elements.summaryHint.textContent = 'Use Groq para transcrever áudios e analisar imagens. Resumo final no Gemini.';
         if (!preserveSummary) {
           elements.summaryOutput.textContent = 'O resumo aparecerá aqui.';
           elements.copySummaryButton.disabled = true;
@@ -400,7 +374,7 @@ FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. 
       const conversationId = state.selectedConversationId;
       elements.tokenEstimate.textContent = 'Calculando estimativa de tokens…';
       try {
-        const data = await request(`/api/conversations/${encodeURIComponent(conversationId)}/token-estimate`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value, provider: state.provider }) });
+        const data = await request(`/api/conversations/${encodeURIComponent(conversationId)}/token-estimate`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value }) });
         if (state.selectedConversationId !== conversationId) return;
         const compacted = data.compacted ? ` Contexto compactado de ${data.originalCharacters.toLocaleString('pt-BR')} para ${data.sentCharacters.toLocaleString('pt-BR')} caracteres.` : '';
         elements.tokenEstimate.textContent = `Estimativa: ≈ ${data.estimatedInputTokens.toLocaleString('pt-BR')} tokens de entrada + até ${data.outputTokenBudget.toLocaleString('pt-BR')} de saída = ≈ ${data.estimatedTotalTokens.toLocaleString('pt-BR')} tokens.${compacted}`;
@@ -421,7 +395,6 @@ FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. 
       try {
         const result = await request(`/api/conversations/${encodeURIComponent(selectedId)}/history`, { method: 'POST', body: '{}' });
         elements.conversationInfo.textContent = result.message;
-        // A resposta do WhatsApp chega em lote assíncrono; atualiza sem apagar um resumo já exibido.
         setTimeout(() => { if (state.selectedConversationId === selectedId) loadConversation(selectedId, true); }, 2200);
       } catch (error) {
         elements.conversationInfo.textContent = `Não foi possível buscar histórico: ${error.message}`;
@@ -430,9 +403,7 @@ FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. 
       }
     }
 
-    function wait(milliseconds) {
-      return new Promise((resolve) => setTimeout(resolve, milliseconds));
-    }
+    function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
     function downloadConversationTxt() {
       if (!state.selectedConversationId) return false;
@@ -445,34 +416,23 @@ FORMATO DE ENTREGA: responda exclusivamente no corpo do chat, em texto simples. 
       return true;
     }
 
-    function exportConversationTxt() {
-      downloadConversationTxt();
-    }
+    function exportConversationTxt() { downloadConversationTxt(); }
 
     async function prepareForGemini() {
       if (!state.selectedConversationId) return;
-      // Abre a interface oficial; o anexo do TXT permanece uma ação manual do usuário.
       window.open(state.geminiChatUrl, '_blank', 'noopener');
       downloadConversationTxt();
-
-      const geminiPrompt = `Analise o arquivo TXT que vou anexar. Ele contém o histórico de uma conversa de consórcio.
-
-${elements.instructions.value}`;
+      const geminiPrompt = `Analise o arquivo TXT que vou anexar. Ele contém o histórico de uma conversa de consórcio.\n\n${elements.instructions.value}`;
       try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(geminiPrompt);
-        } else {
+        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(geminiPrompt);
+        else {
           const temporary = document.createElement('textarea');
           temporary.value = geminiPrompt;
-          temporary.style.position = 'fixed';
-          temporary.style.opacity = '0';
-          document.body.append(temporary);
-          temporary.select();
-          document.execCommand('copy');
-          temporary.remove();
+          temporary.style.position = 'fixed'; temporary.style.opacity = '0';
+          document.body.append(temporary); temporary.select(); document.execCommand('copy'); temporary.remove();
         }
         elements.conversationInfo.textContent = 'TXT baixado e prompt copiado. No Gemini, anexe o TXT e cole o prompt.';
-      } catch (error) {
+      } catch {
         elements.conversationInfo.textContent = 'TXT baixado. No Gemini, anexe o arquivo e copie o prompt manualmente do campo de instruções.';
       }
     }
@@ -484,14 +444,11 @@ ${elements.instructions.value}`;
       try {
         const stats = await request(`/api/conversations/${encodeURIComponent(conversationId)}/audio/pending`);
         if (!stats.available) {
-          elements.conversationInfo.textContent = stats.unavailable
-            ? `${stats.unavailable} áudio(s) não estão disponíveis localmente para transcrição.`
-            : 'Não há áudios pendentes para transcrever nesta conversa.';
+          elements.conversationInfo.textContent = stats.unavailable ? `${stats.unavailable} áudio(s) não estão disponíveis localmente.` : 'Não há áudios pendentes.';
           return;
         }
         const unavailable = stats.unavailable ? ` ${stats.unavailable} áudio(s) sem arquivo local serão ignorados.` : '';
-        if (!confirm(`Transcrever ${stats.available} áudio(s) desta conversa agora? Isso consome créditos da Groq.${unavailable}`)) return;
-
+        if (!confirm(`Transcrever ${stats.available} áudio(s)? Consome créditos da Groq.${unavailable}`)) return;
         elements.transcribeAllButton.textContent = 'Transcrevendo 0…';
         const started = await request(`/api/conversations/${encodeURIComponent(conversationId)}/audio/transcribe-all`, { method: 'POST', body: '{}' });
         let job = started.job;
@@ -501,32 +458,52 @@ ${elements.instructions.value}`;
           const status = await request(`/api/transcription-jobs/${encodeURIComponent(job.id)}`);
           job = status.job;
         }
-        if (job.status === 'failed') throw new Error('O lote de transcrição foi interrompido antes de terminar.');
+        if (job.status === 'failed') throw new Error('Lote interrompido.');
         await loadConversation(conversationId, true);
-        elements.conversationInfo.textContent = job.failed
-          ? `${job.succeeded} áudio(s) transcrito(s); ${job.failed} falharam e podem ser tentados manualmente.`
-          : `${job.succeeded} áudio(s) transcrito(s) com sucesso.`;
+        elements.conversationInfo.textContent = job.failed ? `${job.succeeded} transcrito(s); ${job.failed} falharam.` : `${job.succeeded} áudio(s) transcrito(s).`;
       } catch (error) {
-        elements.conversationInfo.textContent = `Não foi possível transcrever os áudios: ${error.message}`;
-      } finally {
-        setButtonLoading(elements.transcribeAllButton, false);
-      }
+        elements.conversationInfo.textContent = `Não foi possível transcrever: ${error.message}`;
+      } finally { setButtonLoading(elements.transcribeAllButton, false); }
+    }
+
+    async function analyzeAllImages() {
+      if (!state.selectedConversationId) return;
+      const conversationId = state.selectedConversationId;
+      setButtonLoading(elements.analyzeAllImagesButton, true, 'Verificando…');
+      try {
+        const stats = await request(`/api/conversations/${encodeURIComponent(conversationId)}/image/pending`);
+        if (!stats.available) {
+          elements.conversationInfo.textContent = stats.unavailable ? `${stats.unavailable} imagem(ns) não estão disponíveis.` : 'Não há imagens pendentes.';
+          return;
+        }
+        const unavailable = stats.unavailable ? ` ${stats.unavailable} imagem(ns) sem arquivo local serão ignoradas.` : '';
+        if (!confirm(`Analisar ${stats.available} imagem(ns)? Consome créditos da Groq (visão).${unavailable}`)) return;
+        elements.analyzeAllImagesButton.textContent = 'Analisando 0…';
+        const started = await request(`/api/conversations/${encodeURIComponent(conversationId)}/image/analyze-all`, { method: 'POST', body: '{}' });
+        let job = started.job;
+        while (job.status === 'running') {
+          elements.analyzeAllImagesButton.textContent = `Analisando ${job.processed}/${job.total}…`;
+          await wait(900);
+          const status = await request(`/api/image-analysis-jobs/${encodeURIComponent(job.id)}`);
+          job = status.job;
+        }
+        if (job.status === 'failed') throw new Error('Lote interrompido.');
+        await loadConversation(conversationId, true);
+        elements.conversationInfo.textContent = job.failed ? `${job.succeeded} analisada(s); ${job.failed} falharam.` : `${job.succeeded} imagem(ns) analisada(s).`;
+      } catch (error) {
+        elements.conversationInfo.textContent = `Não foi possível analisar: ${error.message}`;
+      } finally { setButtonLoading(elements.analyzeAllImagesButton, false); }
     }
 
     async function transcribePendingAudiosBeforeSummary(conversationId) {
       const stats = await request(`/api/conversations/${encodeURIComponent(conversationId)}/audio/pending`);
       if (!stats.available) {
-        if (stats.unavailable) elements.summaryHint.textContent = `${stats.unavailable} áudio(s) não estão disponíveis localmente e não entrarão no resumo.`;
+        if (stats.unavailable) elements.summaryHint.textContent = `${stats.unavailable} áudio(s) não estão disponíveis localmente.`;
         return;
       }
-
       const unavailable = stats.unavailable ? ` ${stats.unavailable} áudio(s) sem arquivo local serão ignorados.` : '';
-      const shouldTranscribe = confirm(`Esta conversa tem ${stats.available} áudio(s) ainda não transcrito(s).
-
-OK: transcrever todos antes de resumir (consome créditos da Groq).
-Cancelar: resumir somente textos e áudios já transcritos.${unavailable}`);
+      const shouldTranscribe = confirm(`Esta conversa tem ${stats.available} áudio(s) ainda não transcrito(s).\n\nOK: transcrever todos antes de resumir (consome créditos da Groq).\nCancelar: resumir somente textos e áudios já transcritos.${unavailable}`);
       if (!shouldTranscribe) return;
-
       const started = await request(`/api/conversations/${encodeURIComponent(conversationId)}/audio/transcribe-all`, { method: 'POST', body: '{}' });
       let job = started.job;
       while (job.status === 'running') {
@@ -535,27 +512,21 @@ Cancelar: resumir somente textos e áudios já transcritos.${unavailable}`);
         const status = await request(`/api/transcription-jobs/${encodeURIComponent(job.id)}`);
         job = status.job;
       }
-
-      if (job.status === 'failed') throw new Error('O lote de transcrição foi interrompido antes de terminar.');
+      if (job.status === 'failed') throw new Error('Lote de transcrição interrompido.');
       await loadConversation(conversationId, true);
-      if (job.failed) elements.summaryHint.textContent = `${job.succeeded} áudio(s) transcrito(s); ${job.failed} falharam após novas tentativas. Você pode transcrevê-los manualmente; o resumo seguirá com o conteúdo disponível.`;
-      else elements.summaryHint.textContent = `${job.succeeded} áudio(s) transcrito(s). Gerando o resumo completo…`;
+      if (job.failed) elements.summaryHint.textContent = `${job.succeeded} áudio(s) transcrito(s); ${job.failed} falharam. Resumo seguirá com disponível.`;
+      else elements.summaryHint.textContent = `${job.succeeded} áudio(s) transcrito(s). Gerando resumo…`;
     }
 
     async function analyzePendingImagesBeforeSummary(conversationId) {
       const stats = await request(`/api/conversations/${encodeURIComponent(conversationId)}/image/pending`);
       if (!stats.available) {
-        if (stats.unavailable) elements.summaryHint.textContent = `${stats.unavailable} imagem(ns) não estão disponíveis localmente e não entrarão no resumo.`;
+        if (stats.unavailable) elements.summaryHint.textContent = `${stats.unavailable} imagem(ns) não estão disponíveis.`;
         return;
       }
-
       const unavailable = stats.unavailable ? ` ${stats.unavailable} imagem(ns) sem arquivo local serão ignoradas.` : '';
-      const shouldAnalyze = confirm(`Esta conversa tem ${stats.available} imagem(ns) ainda não analisada(s).
-
-OK: analisar todas antes de resumir (consome créditos da Groq).
-Cancelar: resumir sem usar as imagens.${unavailable}`);
+      const shouldAnalyze = confirm(`Esta conversa tem ${stats.available} imagem(ns) ainda não analisada(s).\n\nOK: analisar todas antes de resumir (consome créditos da Groq).\nCancelar: resumir sem imagens.${unavailable}`);
       if (!shouldAnalyze) return;
-
       const started = await request(`/api/conversations/${encodeURIComponent(conversationId)}/image/analyze-all`, { method: 'POST', body: '{}' });
       let job = started.job;
       while (job.status === 'running') {
@@ -564,25 +535,24 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
         const status = await request(`/api/image-analysis-jobs/${encodeURIComponent(job.id)}`);
         job = status.job;
       }
-
-      if (job.status === 'failed') throw new Error('O lote de análise de imagens foi interrompido antes de terminar.');
+      if (job.status === 'failed') throw new Error('Lote de imagens interrompido.');
       await loadConversation(conversationId, true);
-      if (job.failed) elements.summaryHint.textContent = `${job.succeeded} imagem(ns) analisada(s); ${job.failed} falharam. O resumo seguirá com o conteúdo disponível.`;
-      else elements.summaryHint.textContent = `${job.succeeded} imagem(ns) analisada(s). Gerando o resumo completo…`;
+      if (job.failed) elements.summaryHint.textContent = `${job.succeeded} imagem(ns) analisada(s); ${job.failed} falharam. Resumo seguirá com disponível.`;
+      else elements.summaryHint.textContent = `${job.succeeded} imagem(ns) analisada(s). Gerando resumo…`;
     }
 
     async function summarizeConversation() {
       if (!state.selectedConversationId) return;
       const conversationId = state.selectedConversationId;
-      setButtonLoading(elements.summarizeButton, true, 'Verificando áudios…');
+      setButtonLoading(elements.summarizeButton, true, 'Verificando…');
       elements.copySummaryButton.disabled = true;
-      elements.summaryOutput.textContent = 'Verificando textos e áudios disponíveis…';
+      elements.summaryOutput.textContent = 'Verificando textos, áudios e imagens…';
       try {
         await transcribePendingAudiosBeforeSummary(conversationId);
         await analyzePendingImagesBeforeSummary(conversationId);
         elements.summarizeButton.textContent = 'Gerando resumo…';
         elements.summaryOutput.textContent = 'Enviando conversa para a IA…';
-        const data = await request(`/api/conversations/${encodeURIComponent(conversationId)}/summarize`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value, provider: state.provider }) });
+        const data = await request(`/api/conversations/${encodeURIComponent(conversationId)}/summarize`, { method: 'POST', body: JSON.stringify({ instructions: elements.instructions.value }) });
         elements.summaryOutput.textContent = data.summary;
         elements.copySummaryButton.disabled = false;
       } catch (error) { elements.summaryOutput.textContent = `Erro: ${error.message}`; elements.copySummaryButton.disabled = true; }
@@ -592,7 +562,7 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
     async function summarizeManual() {
       setButtonLoading(elements.manualButton, true, 'Gerando resumo…'); elements.manualOutput.textContent = 'Enviando texto para a IA…';
       try {
-        const data = await request('/api/summarize', { method: 'POST', body: JSON.stringify({ text: elements.manualText.value, instructions: elements.instructions.value, provider: state.provider }) });
+        const data = await request('/api/summarize', { method: 'POST', body: JSON.stringify({ text: elements.manualText.value, instructions: elements.instructions.value }) });
         elements.manualOutput.textContent = data.summary;
       } catch (error) { elements.manualOutput.textContent = `Erro: ${error.message}`; }
       finally { setButtonLoading(elements.manualButton, false); }
@@ -600,9 +570,7 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
 
     async function resetWhatsApp(clearData) {
       const button = clearData ? elements.newAccountButton : elements.resetButton;
-      const prompt = clearData
-        ? 'Isso remove a sessão atual E apaga definitivamente conversas, contatos, áudios e resumos salvos neste computador. Use apenas para conectar outra conta. Deseja continuar?'
-        : 'Isso remove somente a sessão local atual e pede um novo QR. Conversas e áudios já salvos serão preservados. Deseja continuar?';
+      const prompt = clearData ? 'Isso remove a sessão atual E apaga definitivamente conversas, contatos, áudios e resumos salvos neste computador. Use apenas para conectar outra conta. Deseja continuar?' : 'Isso remove somente a sessão local atual e pede um novo QR. Conversas e áudios já salvos serão preservados. Deseja continuar?';
       if (!confirm(prompt)) return;
       setButtonLoading(button, true, 'Preparando QR…');
       try {
@@ -619,6 +587,7 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
           elements.prepareGeminiButton.disabled = true;
           elements.exportTxtButton.disabled = true;
           elements.transcribeAllButton.disabled = true;
+          elements.analyzeAllImagesButton.disabled = true;
           elements.tokenEstimate.textContent = 'Selecione uma conversa para estimar o uso de tokens.';
           elements.copySummaryButton.disabled = true;
           elements.olderHistoryButton.disabled = true;
@@ -636,23 +605,17 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
       const text = elements.summaryOutput.textContent.trim();
       if (!text || text === 'O resumo aparecerá aqui.') return;
       try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(text);
-        } else {
+        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+        else {
           const temporary = document.createElement('textarea');
-          temporary.value = text;
-          temporary.style.position = 'fixed';
-          temporary.style.opacity = '0';
-          document.body.append(temporary);
-          temporary.select();
-          document.execCommand('copy');
-          temporary.remove();
+          temporary.value = text; temporary.style.position = 'fixed'; temporary.style.opacity = '0';
+          document.body.append(temporary); temporary.select(); document.execCommand('copy'); temporary.remove();
         }
         const original = elements.copySummaryButton.textContent;
         elements.copySummaryButton.textContent = 'Copiado!';
         setTimeout(() => { elements.copySummaryButton.textContent = original; }, 1600);
-      } catch (error) {
-        elements.summaryHint.textContent = 'Não foi possível copiar automaticamente. Selecione o texto do resumo e copie manualmente.';
+      } catch {
+        elements.summaryHint.textContent = 'Não foi possível copiar automaticamente. Selecione o texto e copie manualmente.';
       }
     }
 
@@ -660,21 +623,15 @@ Cancelar: resumir sem usar as imagens.${unavailable}`);
     elements.prepareGeminiButton.addEventListener('click', prepareForGemini);
     elements.exportTxtButton.addEventListener('click', exportConversationTxt);
     elements.transcribeAllButton.addEventListener('click', transcribeAllAudios);
+    elements.analyzeAllImagesButton.addEventListener('click', analyzeAllImages);
     elements.tokenEstimateButton.addEventListener('click', updateTokenEstimate);
     elements.copySummaryButton.addEventListener('click', copySummary);
     elements.olderHistoryButton.addEventListener('click', requestOlderHistory);
     elements.manualButton.addEventListener('click', summarizeManual);
     elements.conversationSearch.addEventListener('input', () => renderConversations());
     elements.instructions.addEventListener('input', scheduleTokenEstimate);
-    elements.aiProvider.addEventListener('change', () => {
-      state.provider = elements.aiProvider.value === 'ollama' ? 'ollama' : 'groq';
-      localStorage.setItem('consorcio-ai-provider', state.provider);
-      updateProviderNote();
-      updateTokenEstimate();
-    });
 
     loadAssistantConfig(); refreshStatus(); loadConversations();
-    // QR expira rápido; a tela acompanha a conexão sem expor a string do QR.
     setInterval(refreshStatus, 5000); setInterval(loadConversations, 15000);
   </script>
 </body>

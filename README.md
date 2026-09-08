@@ -48,10 +48,10 @@ Com `IMPORT_HISTORY=true` (padrão), no primeiro pareamento o app importa e salv
 Em uma conversa selecionada, o botão **Buscar 50 anteriores** pede ao WhatsApp mais uma página de até 50 mensagens antes da mensagem mais antiga já guardada. Pode ser usado novamente após alguns segundos. Essa busca não usa IA, mas o WhatsApp pode não retornar mensagens antigas se elas não estiverem disponíveis na conta/dispositivo.
 
 - **Texto histórico:** é apenas gravado em `data/`; não vai para a IA automaticamente.
-- **Qualquer áudio recebido:** é guardado localmente em `data/audio/` para aparecer com player no painel. Isso não chama a Groq. Na conversa, clique em **Transcrever este áudio** somente nos áudios que desejar enviar à IA.
-- **Imagens de simulação:** são guardadas em `data/images/`, aparecem como prévia na conversa e não são enviadas automaticamente à IA.
-- **Transcrição/análise em lote:** ao clicar em **Gerar resumo da conversa**, o painel pergunta se deve transcrever todos os áudios e analisar todas as imagens locais pendentes. Confirmar envia os arquivos um a um para a Groq e consome uma requisição por áudio/imagem; cancelar gera o resumo somente com textos, transcrições e análises já existentes.
-- **Resumo:** só chama a IA quando você clica em **Gerar resumo da conversa** e envia o contexto completo, sem cortes automáticos. O painel mostra uma estimativa de tokens de entrada, saída e total antes do resumo; é uma aproximação, pois o tokenizador real pode variar. Provedores em nuvem podem recusar conversas que excedam seus próprios limites de contexto ou taxa. Um novo clique faz uma nova chamada.
+- **Qualquer áudio recebido:** é guardado localmente em `data/audio/` para aparecer com player no painel. Isso não chama a Groq. Na conversa, clique em **Transcrever este áudio** ou use **Transcrever todos os áudios** (independente do resumo) somente nos áudios que desejar enviar à IA.
+- **Imagens de simulação:** são guardadas em `data/images/`, aparecem como prévia na conversa e não são enviadas automaticamente à IA. Use **Analisar todas as imagens** para processar em lote, independente de gerar resumo.
+- **Transcrição/análise em lote:** botões **Transcrever todos os áudios** e **Analisar todas as imagens** enviam os arquivos um a um para a Groq e consomem uma requisição por mídia. Ao clicar em **Gerar resumo da conversa**, o painel também pergunta se deve transcrever/analisar pendentes antes; você pode confirmar ou cancelar e gerar o resumo só com o que já existe.
+- **Resumo:** só chama a IA quando você clica em **Gerar resumo da conversa** (Groq) ou usa **Preparar para Gemini**. O painel mostra uma estimativa de tokens; é aproximação. Provedores podem recusar conversas que excedam limites de contexto.
 
 Para o modo manual funcionar, `STORE_AUDIO_FOR_MANUAL_TRANSCRIPTION=true` deve permanecer no `.env` (é o padrão). Se definir `false`, o sistema não guardará os áudios, nem poderá reproduzi-los ou transcrevê-los depois. Para áudios recebidos antes desta atualização, faça **Refazer conexão / novo QR**: se o WhatsApp reenviar a mídia no histórico, o app a anexa à conversa existente sem duplicar os textos.
 
@@ -75,27 +75,23 @@ Não existe uma API confiável para comparar toda a conta e descobrir retroativa
 - `GET /api/conversations/:id/export.txt` — baixa o histórico local completo em TXT.
 - `POST /api/conversations/:id/history` — pede uma página de até 50 mensagens mais antigas ao WhatsApp.
 - `GET /api/conversations/:id/audio/pending` — quantidade de áudios disponíveis para transcrição em lote.
-- `POST /api/conversations/:id/audio/transcribe-all` — inicia a transcrição manual em lote.
-- `POST /api/conversations/:id/image/analyze-all` — inicia a análise de imagens da conversa em lote.
+- `POST /api/conversations/:id/audio/transcribe-all` — inicia a transcrição em lote (botão "Transcrever todos os áudios").
+- `GET /api/conversations/:id/image/pending` — quantidade de imagens pendentes.
+- `POST /api/conversations/:id/image/analyze-all` — inicia a análise de imagens em lote (botão "Analisar todas as imagens") — independente do resumo.
 - `POST /api/conversations/:id/token-estimate` — estimativa local do consumo de tokens para o resumo.
-- `POST /api/conversations/:id/summarize` — resumo de uma conversa armazenada.
+- `POST /api/conversations/:id/summarize` — resumo de uma conversa armazenada via Groq.
 - `POST /api/summarize` — resumo de texto avulso.
 
-## Resumo local com Ollama
+## Fluxo de trabalho atual (Groq + Gemini)
 
-No painel, selecione **Local (Ollama)** em “Motor do resumo” para resumir conversas no seu próprio computador, sem consumir tokens ou créditos da Groq. Instale o [Ollama](https://ollama.com/), baixe o modelo configurado e mantenha o serviço aberto:
-
-```powershell
-ollama pull llama3.2:3b
-ollama serve
-```
-
-O modelo padrão local é `llama3.2:3b`, mais adequado para computadores com 8 GB de RAM e sem GPU dedicada potente. O app usa `http://127.0.0.1:11434` por padrão e envia o contexto completo da conversa, sem cortes automáticos. A seleção vale para o **resumo de texto**. Transcrição de áudio e análise de imagens continuam na Groq até uma integração local específica para essas mídias.
-
-Por padrão, `OLLAMA_KEEP_ALIVE=0` descarrega o modelo local ao terminar cada resumo, liberando RAM e encerrando o processo de execução do modelo após alguns instantes. Isso faz o próximo resumo demorar mais para carregar o modelo. Use `5m`, por exemplo, se preferir velocidade nas chamadas seguintes e tiver RAM disponível.
+- **Groq** faz transcrição de áudios (`whisper-large-v3-turbo`) e análise de imagens (`qwen/qwen3.6-27b`) localmente, sem Ollama.
+- Botões independentes: **Transcrever todos os áudios** e **Analisar todas as imagens** funcionam separadamente, fora do fluxo de resumo.
+- Ao clicar em **Gerar resumo da conversa**, o sistema pergunta se quer transcrever/analisar pendentes antes de resumir (opcional).
+- **Preparar para Gemini**: baixa o TXT da conversa + copia o prompt curto e abre o Gemini. O resumo final de CRM é gerado no Gemini, conforme seu fluxo preferido.
+- Prompt padrão foi encurtado para ser uma nota interna objetiva (2-4 parágrafos + "Dados relevantes:").
 
 ## Arquivos enviados para a IA
 
-Com `SAVE_AI_REQUESTS=true`, cada resumo cria um arquivo `.txt` em `data/ai-requests/` contendo o provedor, modelo, instruções e o trecho exato da conversa enviado para a IA. A chave da API nunca é incluída. Esses arquivos têm dados sensíveis e ficam fora do Git; defina `SAVE_AI_REQUESTS=false` se não quiser guardá-los.
+Com `SAVE_AI_REQUESTS=true`, cada resumo cria um arquivo `.txt` em `data/ai-requests/` contendo modelo, instruções e o trecho exato da conversa enviado para a IA. A chave da API nunca é incluída. Esses arquivos têm dados sensíveis e ficam fora do Git; defina `SAVE_AI_REQUESTS=false` se não quiser guardá-los.
 
 A chave da Groq permanece exclusivamente no servidor; o navegador usa apenas essas rotas locais.
