@@ -174,6 +174,7 @@ function renderEntries(entries) {
   toShow.forEach(entry => {
     const div = document.createElement('div');
     div.className = `message ${entry.fromMe ? 'own' : ''} ${entry.type}`;
+    div.dataset.messageId = entry.sourceId;
     
     const meta = document.createElement('div');
     meta.className = 'message-meta';
@@ -188,20 +189,28 @@ function renderEntries(entries) {
       label.className = `message-audio ${isDone ? 'completed' : 'pending'}`;
       label.textContent = isDone ? 'Áudio transcrito' : 'Áudio • clique em Transcrever';
       div.appendChild(label);
-      // Se já transcrito, mostra transcrição no texto, senão mostra placeholder
+
+      const text = document.createElement('div');
+      text.className = 'message-text';
       if (isDone && entry.text && entry.text.includes('[Áudio transcrito]')) {
-        const text = document.createElement('div');
-        text.className = 'message-text';
         text.textContent = entry.text;
-        div.appendChild(text);
       } else {
-        const text = document.createElement('div');
-        text.className = 'message-text';
         text.style.fontStyle = 'italic';
         text.style.opacity = '0.8';
         text.textContent = entry.audio?.seconds ? `🎧 Áudio de ${entry.audio.seconds}s - pendente` : '🎧 Áudio pendente de transcrição';
-        div.appendChild(text);
       }
+      div.appendChild(text);
+
+      // Botão manual por áudio
+      if (!isDone) {
+        const btn = document.createElement('button');
+        btn.className = 'audio-action';
+        btn.textContent = '▶️ Transcrever este áudio';
+        btn.style.marginTop = '6px';
+        btn.onclick = () => transcribeSingle(entry.sourceId, btn);
+        div.appendChild(btn);
+      }
+
     } else if (entry.type === 'image') {
       const label = document.createElement('div');
       const isDone = entry.image?.analysisStatus === 'completed';
@@ -213,6 +222,16 @@ function renderEntries(entries) {
       text.className = 'message-text';
       text.textContent = entry.text || '[Imagem]';
       div.appendChild(text);
+
+      if (!isDone) {
+        const btn = document.createElement('button');
+        btn.className = 'audio-action';
+        btn.style.background = '#c4a8ff';
+        btn.textContent = '🔍 Analisar esta imagem';
+        btn.style.marginTop = '6px';
+        btn.onclick = () => analyzeSingle(entry.sourceId, btn);
+        div.appendChild(btn);
+      }
     } else {
       const text = document.createElement('div');
       text.className = 'message-text';
@@ -229,11 +248,103 @@ function renderEntries(entries) {
   const imageCount = entries.filter(e => e.type === 'image').length;
   const textCount = entries.filter(e => e.type === 'text').length;
   if (els.currentInfo) {
-    const base = els.currentInfo.textContent.split('•')[0] || '';
     if (audioCount > 0 || imageCount > 0) {
       els.currentInfo.textContent = `${entries.length} msgs: ${textCount} texto, ${audioCount} áudio, ${imageCount} imagem • ${currentConversationName}`;
     }
   }
+}
+
+async function transcribeSingle(messageId, btn) {
+  if (!messageId) return;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Buscando blob...';
+
+  try {
+    const tab = await checkWhatsAppTab();
+    if (!tab) throw new Error('WhatsApp Web não encontrado');
+
+    console.log(`[Krever Popup] Transcrição individual: ${messageId}`);
+    const blobRes = await chrome.tabs.sendMessage(tab.id, { type: 'GET_AUDIO_BLOB', messageId });
+    if (!blobRes?.success) throw new Error(blobRes?.error || 'Blob não encontrado. Dê PLAY no áudio no WhatsApp (deixe tocar 1s) e tente novamente.');
+
+    btn.textContent = '⏳ Transcrevendo...';
+    const res = await chrome.runtime.sendMessage({
+      type: 'TRANSCRIBE_AUDIO',
+      blobData: blobRes.data,
+      mimeType: blobRes.mimeType || 'audio/ogg',
+      fileName: `audio_${messageId}.ogg`,
+      conversationId: currentConversationId,
+      messageId
+    });
+
+    if (res.success) {
+      btn.textContent = '✅ Transcrito!';
+      btn.style.background = '#4ade80';
+      // Atualiza entry local
+      const entry = currentEntries.find(e => e.sourceId === messageId);
+      if (entry) {
+        entry.audio.transcriptionStatus = 'completed';
+        entry.text = res.result.text;
+      }
+      // Atualiza UI da mensagem específica
+      const msgDiv = els.currentEntries.querySelector(`.message[data-message-id="${CSS.escape(messageId)}"] .message-text`);
+      if (msgDiv) msgDiv.textContent = res.result.text;
+      setTimeout(() => {
+        btn.textContent = originalText;
+        btn.disabled = false;
+        renderEntries(currentEntries);
+      }, 1500);
+    } else {
+      throw new Error(res.error);
+    }
+  } catch (e) {
+    console.error('Erro transcrição individual', e);
+    btn.textContent = '❌ Erro';
+    alert(`Erro: ${e.message}\n\nDica: No WhatsApp Web, dê PLAY no áudio, deixe tocar 1 segundo, pause e clique novamente em transcrever.`);
+    setTimeout(() => {
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }, 2000);
+  }
+}
+
+async function analyzeSingle(messageId, btn) {
+  if (!messageId) return;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Analisando...';
+  try {
+    const tab = await checkWhatsAppTab();
+    const entry = currentEntries.find(e => e.sourceId === messageId);
+    const blobRes = await chrome.tabs.sendMessage(tab.id, { type: 'GET_IMAGE_BLOB', messageId, src: entry?.image?.src });
+    if (!blobRes?.success) throw new Error(blobRes?.error);
+
+    const res = await chrome.runtime.sendMessage({
+      type: 'ANALYZE_IMAGE',
+      base64: blobRes.base64,
+      mimeType: blobRes.mimeType,
+      conversationId: currentConversationId,
+      messageId
+    });
+
+    if (res.success) {
+      btn.textContent = '✅ Analisada!';
+      btn.style.background = '#4ade80';
+      const entryLocal = currentEntries.find(e => e.sourceId === messageId);
+      if (entryLocal) {
+        entryLocal.image.analysisStatus = 'completed';
+        entryLocal.text = `[Imagem analisada] ${res.analysis}`;
+      }
+      renderEntries(currentEntries);
+    } else throw new Error(res.error);
+  } catch (e) {
+    btn.textContent = '❌ Erro';
+    alert(`Erro: ${e.message}`);
+    setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2000);
+    return;
+  }
+  btn.disabled = false;
 }
 
 function setButtonsDisabled(disabled) {
