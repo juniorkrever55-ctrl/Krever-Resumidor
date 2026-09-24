@@ -532,6 +532,17 @@ REGRAS:
 
     function exportConversationTxt() { downloadConversationTxt(); }
 
+    // Abre a URL somente em uma nova aba comum do navegador; nunca redirecione a página do painel.
+    // Não use 'noopener': com ele o window.open sempre retorna null (impossível saber se o pop-up
+    // foi bloqueado) e, desde o Chrome 139, a aba pode ser capturada pelo app do Gemini instalado.
+    // Sem 'noopener', o vínculo com o painel é cortado logo em seguida, por segurança.
+    function openInNewBrowserTab(url) {
+      const newTab = window.open(url, '_blank');
+      if (!newTab) return false;
+      try { newTab.opener = null; } catch { /* A nova aba pode já estar em outra origem. */ }
+      return true;
+    }
+
     async function prepareForGemini() {
       if (!state.selectedConversationId) return;
       const extracted = `Dados detectados localmente:\n- CPF: ${elements.fieldCpf.value || 'não detectado'}\n- CNPJ: ${elements.fieldCnpj.value || 'não detectado'}\n- Renda: ${elements.fieldRenda.value || 'não detectado'}\n- Carta: ${elements.fieldCarta.value || 'não detectado'}\n- Parcela: ${elements.fieldParcela.value || 'não detectado'}\n- Lance próprio: ${elements.fieldLance.value || 'não detectado'}\n- Prazo: ${elements.fieldPrazo.value || 'não detectado'}\n- Profissão: ${elements.fieldProfissao.value || 'não detectado'}\n\n`;
@@ -546,15 +557,10 @@ REGRAS:
         }
       } catch {}
       downloadConversationTxt();
-      elements.conversationInfo.textContent = 'TXT baixado e prompt copiado. Redirecionando para o Gemini...';
-      try {
-        const win = window.open(state.geminiChatUrl, '_blank', 'noopener');
-        if (!win || win.closed || typeof win.closed === 'undefined') {
-          setTimeout(() => { window.location.href = state.geminiChatUrl; }, 800);
-        }
-      } catch {
-        window.location.href = state.geminiChatUrl;
-      }
+      const geminiTabOpened = openInNewBrowserTab(state.geminiChatUrl);
+      elements.conversationInfo.textContent = geminiTabOpened
+        ? 'TXT baixado e prompt copiado. O Gemini foi aberto em uma nova aba: anexe o TXT e cole o prompt.'
+        : 'TXT baixado e prompt copiado. O navegador bloqueou a nova aba do Gemini: permita pop-ups deste painel ou abra o Gemini manualmente.';
     }
 
     function copyJsonPrompt() {

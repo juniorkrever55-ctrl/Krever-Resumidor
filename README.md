@@ -39,7 +39,7 @@ O painel usa os contatos e chats que o WhatsApp disponibiliza na sincronização
 
 Depois de selecionar uma conversa, use **Exportar TXT**. O download contém todo o histórico local, incluindo transcrições de áudio e análises de imagem já realizadas. O arquivo é nomeado com o nome do contato quando disponível; caso contrário, usa `cliente-AAAA-MM-DD.txt`. Nenhuma chamada de IA é feita para exportar.
 
-O botão **Preparar para Gemini** baixa o mesmo TXT, copia o prompt atual e abre o Gemini Chat em outra aba. O anexo do arquivo e o envio da mensagem continuam manuais, dentro da interface oficial do Gemini. Para sempre abrir uma conversa específica, defina `GEMINI_CHAT_URL` no `.env` com a URL dessa conversa; não coloque esse link em arquivos versionados.
+O botão **Preparar para Gemini** baixa o mesmo TXT, copia o prompt atual e abre o Gemini Chat em uma nova aba comum do navegador, mantendo o painel na aba original, mesmo que o app do Gemini esteja instalado no Chrome. O anexo do arquivo e o envio da mensagem continuam manuais, dentro da interface oficial do Gemini. Para sempre abrir uma conversa específica, defina `GEMINI_CHAT_URL` no `.env` com a URL dessa conversa; não coloque esse link em arquivos versionados.
 
 ## Histórico e uso da IA
 
