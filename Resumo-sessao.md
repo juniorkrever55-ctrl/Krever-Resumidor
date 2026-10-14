@@ -124,6 +124,24 @@ conversão acontece na hora de exportar, não precisa reimportar nada.
 - [ ] Usuário validar na máquina dele com uma conversa real (reiniciar `npm start`).
 - [ ] (Opcional) Se um dia atender clientes fora de SP, trocar `APP_TIME_ZONE` no `.env`.
 
+## ⚠️ Divergência main local × GitHub (diagnosticada em 2026-10-14)
+
+A `main` do VSCode do usuário e a `main` do GitHub divergiram 6×6 commits a
+partir de `29bca41` (backup salvo na branch `backup-main-14out`, já no GitHub).
+Análise arquivo a arquivo (simulação de merge feita pela IA):
+
+- **Conflito só em `index.js` e `public/index.html`** — extensão, README,
+  `.env.example` etc. juntam automaticamente.
+- `index.js`: a versão do **GitHub vence** (análise de imagem com fallback de
+  modelos qwen + anti-`<think>`; a local era a mesma coisa, só que simples).
+- `public/index.html`: **decisão do usuário (2026-10-14)** — botão Preparar para
+  Gemini **só abre nova aba, painel nunca redireciona** (versão do GitHub,
+  commit `3c4df21`); descartado o redirecionamento local do commit `5c318f7`.
+- Resolução no VSCode: `git pull origin main` → conflito esperado →
+  `git checkout --theirs index.js public/index.html` → `git add ...` →
+  `git commit --no-edit` → depois merge da branch da IA (fuso), que entra limpo.
+- Depois de tudo mergeado e testado, a branch `backup-main-14out` pode ser apagada.
+
 ## 📝 Histórico de alterações
 
 | Data | Alteração | Arquivos |
@@ -131,6 +149,7 @@ conversão acontece na hora de exportar, não precisa reimportar nada.
 | 2026-10-14 | Criado este arquivo + regras permanentes (sem PR/merge; comandos VSCode no final) | `Resumo-sessao.md` |
 | 2026-10-14 | Fix: hora UTC→`America/Sao_Paulo` no TXT do Gemini, transcript Groq, painel e extensão | `index.js`, `public/index.html`, `.env.example`, `adaptação_extensão/lib/utils.js`, `adaptação_extensão/content/whatsapp.js` |
 | 2026-10-14 | Regra do VSCode corrigida pelo usuário: comando final é sempre **pull + merge com a branch da IA** (`arena/c4f65b51-krever-resumidor`), não add/commit | `Resumo-sessao.md` |
+| 2026-10-14 | Diagnóstico da divergência `main` local × GitHub (6×6 commits): merge simulado conflita só em `index.js`/`public/index.html`; decisão do usuário: manter versão GitHub nos dois (Gemini **só em nova aba**); backup em `backup-main-14out` | `Resumo-sessao.md` |
 
 ---
 
