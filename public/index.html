@@ -246,7 +246,8 @@ REGRAS:
     function formatDate(value) {
       if (!value) return '';
       const date = new Date(value);
-      return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(date);
+      // Fuso fixo p/ painel mostrar a MESMA hora do TXT exportado (antes dependia do fuso do navegador).
+      return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }).format(date);
     }
 
     function setStatus(status) {

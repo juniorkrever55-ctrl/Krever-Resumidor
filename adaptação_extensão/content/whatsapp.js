@@ -858,19 +858,27 @@
     } catch (e) { tokenEl.textContent = 'Erro: ' + e.message; }
   }
 
+  // Horário SEMPRE em America/Sao_Paulo no TXT/Gemini (timestamp gravado é UTC; ver lib/utils.js).
+  function formatKreverTimestamp(value) {
+    if (window.KreverUtils?.formatTimestampForExport) return window.KreverUtils.formatTimestampForExport(value);
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value || '');
+    return new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(date);
+  }
+
   async function exportTxtInPanel() {
     const entries = extractMessages();
-    const content = entries.map(e => `[${e.timestamp}] ${e.sender}: ${e.text}`).join('\n');
+    const content = entries.map(e => `[${formatKreverTimestamp(e.timestamp)}] ${e.sender}: ${e.text}`).join('\n');
     const fileName = `conversa-${getChatName().replace(/[^a-z0-9]/gi, '-')}-${new Date().toISOString().slice(0,10)}.txt`;
-    const blob = new Blob([`CONVERSA: ${getChatName()}\nEXPORTADO: ${new Date().toLocaleString('pt-BR')}\n\n${content}`], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([`CONVERSA: ${getChatName()}\nEXPORTADO EM: ${formatKreverTimestamp(new Date())}\nFUSO HORÁRIO: America/Sao_Paulo (horários abaixo já convertidos para este fuso)\n\n${content}`], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = fileName; a.click(); setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
   async function prepareGeminiInPanel() {
     const entries = extractMessages();
-    const content = entries.map(e => `[${e.timestamp}] ${e.sender}: ${e.text}`).join('\n');
+    const content = entries.map(e => `[${formatKreverTimestamp(e.timestamp)}] ${e.sender}: ${e.text}`).join('\n');
     const fileName = `conversa-${getChatName().replace(/[^a-z0-9]/gi, '-')}-${new Date().toISOString().slice(0,10)}.txt`;
-    const blob = new Blob([`CONVERSA: ${getChatName()}\nEXPORTADO: ${new Date().toLocaleString('pt-BR')}\n\n${content}`], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([`CONVERSA: ${getChatName()}\nEXPORTADO EM: ${formatKreverTimestamp(new Date())}\nFUSO HORÁRIO: America/Sao_Paulo (horários abaixo já convertidos para este fuso)\n\n${content}`], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = fileName; a.click();
     try {
       const config = await chrome.runtime.sendMessage({ type: 'GET_CONFIG' });
@@ -889,7 +897,7 @@
     btn.disabled = true; btn.textContent = '⏳ Gerando...'; output.textContent = 'Enviando para IA...';
     try {
       const entries = extractMessages(); if (!entries.length) throw new Error('Nenhuma mensagem');
-      const transcript = entries.map(e => `[${e.timestamp}] ${e.sender}: ${e.text}`).join('\n');
+      const transcript = entries.map(e => `[${formatKreverTimestamp(e.timestamp)}] ${e.sender}: ${e.text}`).join('\n');
       const config = await chrome.runtime.sendMessage({ type: 'GET_CONFIG' });
       const res = await chrome.runtime.sendMessage({ type: 'SUMMARIZE_TEXT', text: transcript, instructions: config.config.instructions, provider: config.config.summaryProvider || 'groq' });
       if (res.success) output.textContent = res.summary; else output.textContent = 'Erro: ' + res.error;

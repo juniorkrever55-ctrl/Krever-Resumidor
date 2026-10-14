@@ -66,6 +66,36 @@ const ON_DEMAND_HISTORY_PAGE_SIZE = 50;
 const BULK_TRANSCRIPTION_DELAY_MS = 1200;
 const BULK_TRANSCRIPTION_MAX_ATTEMPTS = 3;
 const MAX_VISION_IMAGE_BYTES = Number(process.env.MAX_VISION_IMAGE_BYTES || 14 * 1024 * 1024);
+// Fuso de TODA data/hora exibida/exportada (painel, TXT do Gemini e transcrição enviada à Groq).
+// As mensagens continuam GRAVADAS em ISO UTC (correto p/ ordenar/comparar instantes);
+// só a APRESENTAÇÃO converte p/ este fuso. Sem isso, o TXT levava "2026-...T17:29Z" (UTC)
+// e o Gemini lia como horário local, mostrando a conversa 3h adiantada no Brasil.
+const APP_TIME_ZONE = (() => {
+  const candidate = process.env.APP_TIME_ZONE || 'America/Sao_Paulo';
+  try {
+    new Intl.DateTimeFormat('pt-BR', { timeZone: candidate });
+    return candidate;
+  } catch {
+    console.warn(`APP_TIME_ZONE inválido ("${candidate}"); usando America/Sao_Paulo.`);
+    return 'America/Sao_Paulo';
+  }
+})();
+const exportDateTimeFormatter = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: APP_TIME_ZONE,
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+});
+
+function formatTimestampForExport(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value || '');
+  return exportDateTimeFormatter.format(date);
+}
 
 const DEFAULT_SUMMARY_INSTRUCTIONS = `Você é assistente de vendas de consórcio. Gere uma nota interna de CRM em português do Brasil, objetiva e profissional.
 
@@ -365,12 +395,13 @@ function buildConversationExport(conversation) {
   const heading = [
     `CONVERSA: ${publicConversation.name}`,
     publicConversation.phone ? `NÚMERO: +${publicConversation.phone}` : null,
-    `EXPORTADO EM: ${new Date().toLocaleString('pt-BR')}`,
+    `EXPORTADO EM: ${formatTimestampForExport(new Date())}`,
+    `FUSO HORÁRIO: ${APP_TIME_ZONE} (horários abaixo já convertidos para este fuso)`,
     '',
     '=== HISTÓRICO ===',
     '',
   ].filter((line) => line !== null).join('\n');
-  const messages = entries.map((entry) => `[${entry.timestamp}] ${getSummarySpeaker(entry)}: ${entry.text}`).join('\n\n');
+  const messages = entries.map((entry) => `[${formatTimestampForExport(entry.timestamp)}] ${getSummarySpeaker(entry)}: ${entry.text}`).join('\n\n');
   return `${heading}${messages ? `\n${messages}` : '\nNenhuma mensagem registrada.'}\n`;
 }
 
@@ -1563,7 +1594,7 @@ function estimateTokens(text) {
 
 function buildConversationTranscript(conversationId) {
   return readAllConversationEntries(conversationId)
-    .map((entry) => `[${entry.timestamp}] ${getSummarySpeaker(entry)}: ${entry.text}`)
+    .map((entry) => `[${formatTimestampForExport(entry.timestamp)}] ${getSummarySpeaker(entry)}: ${entry.text}`)
     .join('\n');
 }
 
